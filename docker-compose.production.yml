@@ -2,13 +2,13 @@ version: "3.8"
 
 services:
   db:
+    container_name: labmyshare_db
     image: postgres:15
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
       - ./backups/postgres:/backups
@@ -23,6 +23,7 @@ services:
       - labmyshare_network
 
   redis:
+    container_name: labmyshare_redis
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
@@ -39,12 +40,15 @@ services:
       - labmyshare_network
 
   web:
+    container_name: labmyshare_web
     image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
     restart: unless-stopped
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120"
+      sh -c "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120
+      "
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
@@ -68,6 +72,7 @@ services:
       - labmyshare_network
 
   celery:
+    container_name: labmyshare_celery
     image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
     restart: unless-stopped
     command: celery -A labmyshare worker --loglevel=info --concurrency=4
@@ -88,6 +93,7 @@ services:
       - labmyshare_network
 
   celery-beat:
+    container_name: labmyshare_celery_beat
     image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
     restart: unless-stopped
     command: celery -A labmyshare beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
@@ -102,6 +108,7 @@ services:
       - labmyshare_network
 
   nginx:
+    container_name: labmyshare_nginx
     image: nginx:alpine
     restart: unless-stopped
     ports:
@@ -119,8 +126,8 @@ services:
     networks:
       - labmyshare_network
 
-  # Database backup service
   db-backup:
+    container_name: labmyshare_db_backup
     image: postgres:15
     restart: unless-stopped
     environment:
@@ -132,9 +139,11 @@ services:
       - ./backups/postgres:/backups
       - ./docker/scripts/backup.sh:/backup.sh
     command: >
-      sh -c "chmod +x /backup.sh && 
-             echo '0 2 * * * /backup.sh' | crontab - && 
-             crond -f"
+      sh -c "
+        chmod +x /backup.sh &&
+        echo '0 2 * * * /backup.sh' | crontab - &&
+        crond -f
+      "
     depends_on:
       - db
     networks:
