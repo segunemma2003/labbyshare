@@ -1,0 +1,67 @@
+Django
+djangorestframework
+django-cors-headers
+django-filter
+django-extensions
+
+# Database & Caching
+psycopg2-binary
+django-redis
+
+# Authentication & Security
+firebase-admin
+PyJWT
+cryptography
+
+# API Documentation
+drf-yasg
+uritemplate
+
+# Background Tasks
+celery
+django-celery-beat
+redis
+kombu
+
+# File Handling & Media
+Pillow
+django-storages
+boto3
+
+# Payment Processing
+stripe
+
+# Email & Communications
+django-ses
+twilio
+
+# Utilities
+python-decouple
+django-health-check
+python-dateutil
+pytz
+
+# Production & Monitoring
+gunicorn
+whitenoise
+sentry-sdk[django]
+django-prometheus
+
+# Development & Testing
+django-debug-toolbar
+factory-boy
+pytest
+pytest-django
+pytest-cov
+black
+flake8
+isort
+
+# Data Processing
+pandas
+numpy
+openpyxl
+
+# Search & Analytics
+elasticsearch-dsl
+django-elasticsearch-dsl
