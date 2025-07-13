@@ -1,0 +1,44 @@
+{% extends 'emails/base.html' %} {% block title %}Booking Confirmed -
+LabMyShare{% endblock %} {% block header %}Booking Confirmed{% endblock %} {%
+block content %}
+<h2>Your booking has been confirmed!</h2>
+<p>Hi {{ booking.customer.first_name }},</p>
+<p>Great news! Your booking has been confirmed. Here are the details:</p>
+
+<div class="info-box">
+  <h3>{{ booking.service.name }}</h3>
+  <p>
+    <strong>Professional:</strong> {{ booking.professional.user.get_full_name }}
+  </p>
+  <p><strong>Date:</strong> {{ booking.scheduled_date|date:"F d, Y" }}</p>
+  <p><strong>Time:</strong> {{ booking.scheduled_time|time:"g:i A" }}</p>
+  <p><strong>Duration:</strong> {{ booking.duration_minutes }} minutes</p>
+  <p>
+    <strong>Total Amount:</strong> {{ booking.region.currency_symbol }}{{
+    booking.total_amount }}
+  </p>
+</div>
+
+{% if booking.address_line1 %}
+<h3>Service Location</h3>
+<p>
+  {{ booking.address_line1 }}<br />
+  {% if booking.address_line2 %}{{ booking.address_line2 }}<br />{% endif %} {{
+  booking.city }}, {{ booking.postal_code }}
+</p>
+{% endif %} {% if booking.notes %}
+<h3>Special Instructions</h3>
+<p>{{ booking.notes }}</p>
+{% endif %}
+
+<p>
+  You'll receive reminder notifications before your appointment. If you need to
+  reschedule or cancel, please do so at least 24 hours in advance.
+</p>
+
+<a
+  href="https://app.labmyshare.com/bookings/{{ booking.booking_id }}"
+  class="button"
+  >View Booking Details</a
+>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends 'emails/base.html' %} {% block title %}Professional Verification
+Update - LabMyShare{% endblock %} {% block content %}
+<h2>Professional Verification Update</h2>
+<p>Hi {{ professional.user.first_name }},</p>
+
+{% if action == 'approve' %} {% block header %}Verification Approved{% endblock
+%}
+<div class="info-box">
+  <h3>🎉 Congratulations!</h3>
+  <p>
+    Your professional account has been verified and approved. You can now start
+    accepting bookings on LabMyShare.
+  </p>
+</div>
+
+<h3>What's Next?</h3>
+<ul>
+  <li>Set up your availability schedule</li>
+  <li>Add your services and pricing</li>
+  <li>Complete your profile with photos and portfolio</li>
+  <li>Start receiving booking requests</li>
+</ul>
+
+<a href="https://app.labmyshare.com/professional/dashboard" class="button"
+  >Go to Dashboard</a
+>
+{% else %} {% block header %}Verification Update{% endblock %}
+<div class="warning-box">
+  <h3>Additional Information Required</h3>
+  <p>
+    We need some additional information to complete your professional
+    verification.
+  </p>
+</div>
+
+{% if notes %}
+<h3>Required Actions:</h3>
+<p>{{ notes }}</p>
+{% endif %}
+
+<p>
+  Please log in to your account and upload the required documents or
+  information. Our team will review your submission within 2-3 business days.
+</p>
+
+<a href="https://app.labmyshare.com/professional/verification" class="button"
+  >Update Verification</a
+>
+{% endif %}
+
+<p>
+  If you have any questions, please don't hesitate to contact our support team.
+</p>
+{% endblock %}

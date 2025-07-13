@@ -1,0 +1,33 @@
+{% extends 'emails/base.html' %} {% block title %}Payment Confirmation -
+LabMyShare{% endblock %} {% block header %}Payment Confirmed{% endblock %} {%
+block content %}
+<h2>Payment Successful</h2>
+<p>Hi {{ customer.first_name }},</p>
+<p>Your payment has been processed successfully. Here are the details:</p>
+
+<div class="info-box">
+  <h3>Payment Details</h3>
+  <p><strong>Amount:</strong> {{ payment.currency }} {{ payment.amount }}</p>
+  <p><strong>Payment ID:</strong> {{ payment.payment_id }}</p>
+  <p><strong>Payment Type:</strong> {{ payment.get_payment_type_display }}</p>
+  <p><strong>Date:</strong> {{ payment.created_at|date:"F d, Y g:i A" }}</p>
+</div>
+
+<h3>Booking Information</h3>
+<p><strong>Service:</strong> {{ booking.service.name }}</p>
+<p>
+  <strong>Professional:</strong> {{ booking.professional.user.get_full_name }}
+</p>
+<p>
+  <strong>Scheduled:</strong> {{ booking.scheduled_date|date:"F d, Y" }} at {{
+  booking.scheduled_time|time:"g:i A" }}
+</p>
+
+<p>This email serves as your receipt. Keep it for your records.</p>
+
+<a
+  href="https://app.labmyshare.com/payments/{{ payment.payment_id }}"
+  class="button"
+  >View Receipt</a
+>
+{% endblock %}

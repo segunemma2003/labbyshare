@@ -89,9 +89,9 @@ class User(AbstractUser):
         indexes = [
             models.Index(fields=['email', 'current_region']),
             models.Index(fields=['user_type', 'is_active']),
-            models.Index(fields=['google_id'], condition=models.Q(google_id__isnull=False)),
-            models.Index(fields=['apple_id'], condition=models.Q(apple_id__isnull=False)),
-            models.Index(fields=['firebase_uid'], condition=models.Q(firebase_uid__isnull=False)),
+            models.Index(fields=['google_id'], condition=models.Q(google_id__isnull=False), name='idx_user_google_id_not_null'), 
+            models.Index(fields=['apple_id'], condition=models.Q(apple_id__isnull=False), name='idx_user_apple_id_not_null'),
+            models.Index(fields=['firebase_uid'], condition=models.Q(firebase_uid__isnull=False), name='idx_user_firebase_uid_not_null'),
             models.Index(fields=['created_at', 'current_region']),
             models.Index(fields=['first_name', 'last_name']),  # For name searches
             models.Index(fields=['is_verified', 'user_type']),

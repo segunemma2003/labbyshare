@@ -1,0 +1,35 @@
+{% extends 'emails/base.html' %} {% block title %}Email Verification -
+LabMyShare{% endblock %} {% block header %}Verify Your Email{% endblock %} {%
+block content %}
+<h2>Welcome to LabMyShare!</h2>
+<p>
+  Thank you for joining our community. To complete your registration, please
+  verify your email address using the code below:
+</p>
+
+<div class="info-box">
+  <h3
+    style="margin: 0; font-size: 24px; text-align: center; letter-spacing: 3px"
+  >
+    {{ otp }}
+  </h3>
+</div>
+
+<p>
+  This verification code will expire in 10 minutes. If you didn't create an
+  account with LabMyShare, please ignore this email.
+</p>
+
+<p>Once verified, you'll be able to:</p>
+<ul>
+  <li>Book professional services in your area</li>
+  <li>Manage your appointments</li>
+  <li>Leave reviews and ratings</li>
+  <li>Save your favorite professionals</li>
+</ul>
+
+<p>
+  Need help? Contact our support team at
+  <a href="mailto:support@labmyshare.com">support@labmyshare.com</a>
+</p>
+{% endblock %}

@@ -46,6 +46,8 @@ LOCAL_APPS = [
     'payments',
     'notifications',
     'admin_panel',
+    'health_check',
+    'analytics',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -53,6 +55,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Static files in production
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -86,7 +89,7 @@ WSGI_APPLICATION = 'labmyshare.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'service_booking_db'),
+        'NAME': os.environ.get('DB_NAME', 'labmyshare_db'),
         'USER': os.environ.get('DB_USER', 'postgres'),
         'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
@@ -136,6 +139,9 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+
+# Static files storage
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files
 MEDIA_URL = '/media/'
@@ -216,6 +222,7 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
+    'EXCEPTION_HANDLER': 'utils.exceptions.custom_exception_handler',
 }
 
 # Swagger Configuration
@@ -242,7 +249,7 @@ SWAGGER_SETTINGS = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    # Add your frontend URLs
+    "https://app.labmyshare.com",  # Add your frontend URLs
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -272,6 +279,11 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@labmyshare.com')
+
+# SMS Configuration (Twilio)
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
 
 # Logging Configuration
 LOGGING = {
@@ -307,6 +319,14 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'verbose',
         },
+        'error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'logs/django_error.log',
+            'maxBytes': 1024*1024*15,  # 15MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
     },
     'root': {
         'handlers': ['console'],
@@ -320,6 +340,21 @@ LOGGING = {
         'django.db.backends': {
             'handlers': ['file'],
             'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        'accounts': {
+            'handlers': ['file', 'error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'payments': {
+            'handlers': ['file', 'error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'notifications': {
+            'handlers': ['file', 'error_file'],
+            'level': 'INFO',
             'propagate': False,
         },
     },
@@ -340,6 +375,10 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    
+    # Security headers
+    SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
 # Cache Keys
 CACHE_KEYS = {
@@ -348,6 +387,7 @@ CACHE_KEYS = {
     'SERVICES': 'services:region:{}:category:{}',
     'PROFESSIONALS': 'professionals:region:{}:service:{}',
     'USER_PROFILE': 'user:profile:{}',
+    'AVAILABILITY': 'availability:professional:{}:region:{}:date:{}',
 }
 
 # Cache Timeouts (in seconds)
@@ -357,4 +397,5 @@ CACHE_TIMEOUTS = {
     'SERVICES': 3600 * 6,  # 6 hours
     'PROFESSIONALS': 3600 * 2,  # 2 hours
     'USER_PROFILE': 3600,  # 1 hour
+    'AVAILABILITY': 1800,  # 30 minutes
 }

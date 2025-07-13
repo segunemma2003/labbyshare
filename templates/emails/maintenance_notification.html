@@ -1,0 +1,31 @@
+{% extends 'emails/base.html' %} {% block title %}{{ title }} - LabMyShare{%
+endblock %} {% block header %}{{ title }}{% endblock %} {% block content %}
+<h2>{{ title }}</h2>
+<p>{{ message }}</p>
+
+<div class="info-box">
+  <h3>Maintenance Details</h3>
+  <p><strong>Scheduled Time:</strong> {{ scheduled_time }}</p>
+  <p><strong>Expected Duration:</strong> {{ duration }}</p>
+</div>
+
+<h3>What to Expect</h3>
+<ul>
+  <li>The LabMyShare app and website will be temporarily unavailable</li>
+  <li>You may not be able to book new appointments during this time</li>
+  <li>Existing bookings and notifications are not affected</li>
+  <li>Service will be restored automatically after maintenance</li>
+</ul>
+
+<p>
+  We apologize for any inconvenience and appreciate your patience as we work to
+  improve our platform.
+</p>
+
+<p>Follow us on social media for real-time updates:</p>
+<p>
+  <a href="https://twitter.com/labmyshare">Twitter</a> |
+  <a href="https://facebook.com/labmyshare">Facebook</a> |
+  <a href="https://instagram.com/labmyshare">Instagram</a>
+</p>
+{% endblock %}
