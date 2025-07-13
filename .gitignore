@@ -171,8 +171,8 @@ Thumbs.db
 .env.production.local
 
 # Django migrations (optional - some prefer to track these)
-*/migrations/*
-!*/migrations/__init__.py
+# */migrations/*
+# !*/migrations/__init__.py
 
 # Redis dump file
 dump.rdb
