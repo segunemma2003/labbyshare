@@ -99,7 +99,6 @@ DATABASES = {
         'OPTIONS': {
             'options': '-c default_statistics_target=50 '
                        '-c maintenance_work_mem=2GB '
-                       '-c checkpoint_completion_target=0.9 '
                        '-c wal_buffers=16MB '
                        '-c shared_buffers=4GB',
         },
