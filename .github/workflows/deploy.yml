@@ -67,17 +67,18 @@ jobs:
           cp .env.example .env
           echo "DEBUG=True" >> .env
           echo "SECRET_KEY=test-secret-key-for-github-actions" >> .env
-          echo "DB_NAME=test_labmyshare" >> .env
-          echo "DB_USER=postgres" >> .env
-          echo "DB_PASSWORD=postgres" >> .env
+          echo "DB_NAME=labmyshare_db" >> .env
+          echo "DB_USER=labmyshare" >> .env
+          echo "DB_PASSWORD=labmyshare2020" >> .env
           echo "DB_HOST=localhost" >> .env
           echo "DB_PORT=5432" >> .env
           echo "REDIS_URL=redis://localhost:6379/1" >> .env
           echo "CELERY_BROKER_URL=redis://localhost:6379/0" >> .env
+          echo "CELERY_RESULT_BACKEND=redis://localhost:6379/0" >> .env
 
       - name: Run migrations
         run: |
-          python manage.py migrate
+          python manage.py migrate --run-syncdb
 
       - name: Run tests
         run: |

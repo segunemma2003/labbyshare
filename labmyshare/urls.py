@@ -81,7 +81,7 @@ urlpatterns = [
     path('api/v1/analytics/', include('analytics.urls')),
     
     # Health check
-    path('health/', include('health_check.urls')),
+    path('health/', include('health.urls')),
 ]
 
 # Serve media files in development

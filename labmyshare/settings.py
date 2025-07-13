@@ -17,6 +17,7 @@ DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 ALLOWED_HOSTS = ['*']  # Configure properly for production
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
+
 # Application definition
 DJANGO_APPS = [
     'django.contrib.admin',
