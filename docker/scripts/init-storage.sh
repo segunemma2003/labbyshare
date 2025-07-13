@@ -55,5 +55,3 @@ for dir in "${STORAGE_DIRS[@]}"; do
 done
 
 echo "📁 Directory structure preserved with .gitkeep files"
-
----
