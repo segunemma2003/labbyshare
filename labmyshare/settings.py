@@ -96,13 +96,7 @@ DATABASES = {
         'PASSWORD': os.environ.get('DB_PASSWORD', 'labmyshare2020'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
-        'OPTIONS': {
-            'options': '-c default_statistics_target=50 '
-                       '-c maintenance_work_mem=2GB '
-                       '-c wal_buffers=16MB '
-                       '-c shared_buffers=4GB',
-        },
-        'CONN_MAX_AGE': 3600,  # Connection pooling
+        'CONN_MAX_AGE': 600,  # Connection pooling
         'CONN_HEALTH_CHECKS': True,
     }
 }
