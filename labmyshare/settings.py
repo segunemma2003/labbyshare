@@ -362,9 +362,10 @@ if not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
         },
     })
     
-# Update loggers to use file handlers in production
-for logger_name in ['django', 'accounts', 'payments', 'notifications']:
-    LOGGING['loggers'][logger_name]['handlers'] = ['console', 'file', 'error_file']
+    # Update loggers to use file handlers in production
+    for logger_name in ['django', 'accounts', 'payments', 'notifications']:
+        LOGGING['loggers'][logger_name]['handlers'] = ['console', 'file', 'error_file']
+
 
 # Performance Settings
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
