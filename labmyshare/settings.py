@@ -46,7 +46,7 @@ LOCAL_APPS = [
     'payments',
     'notifications',
     'admin_panel',
-    'health_check',
+    'health',
     'analytics',
 ]
 
@@ -95,14 +95,11 @@ DATABASES = {
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         'OPTIONS': {
-            'MAX_CONNS': 100,  # Increased for high traffic
-            'OPTIONS': {
-                '-c default_statistics_target=50',
-                '-c maintenance_work_mem=2GB',
-                '-c checkpoint_completion_target=0.9',
-                '-c wal_buffers=16MB',
-                '-c shared_buffers=4GB',
-            }
+            'options': '-c default_statistics_target=50 '
+                       '-c maintenance_work_mem=2GB '
+                       '-c checkpoint_completion_target=0.9 '
+                       '-c wal_buffers=16MB '
+                       '-c shared_buffers=4GB',
         },
         'CONN_MAX_AGE': 3600,  # Connection pooling
         'CONN_HEALTH_CHECKS': True,

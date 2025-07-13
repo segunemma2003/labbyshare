@@ -500,3 +500,47 @@ class BroadcastNotificationSerializer(serializers.Serializer):
     message = serializers.CharField()
     send_push = serializers.BooleanField(default=True)
     send_email = serializers.BooleanField(default=False)
+    
+
+class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed professional information for admin
+    """
+    # User fields
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    phone_number = serializers.CharField(source='user.phone_number', read_only=True)
+    user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    date_joined = serializers.DateTimeField(source='user.date_joined', read_only=True)
+    
+    # Professional stats
+    total_bookings = serializers.SerializerMethodField()
+    total_earnings = serializers.SerializerMethodField()
+    regions_served = serializers.SerializerMethodField()
+    services_offered = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Professional
+        fields = [
+            'id', 'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
+            'date_joined', 'bio', 'experience_years', 'rating', 'total_reviews',
+            'is_verified', 'is_active', 'travel_radius_km', 'min_booking_notice_hours',
+            'commission_rate', 'total_bookings', 'total_earnings', 'regions_served',
+            'services_offered', 'verified_at', 'created_at'
+        ]
+    
+    def get_total_bookings(self, obj):
+        return obj.bookings.count()
+    
+    def get_total_earnings(self, obj):
+        from bookings.models import Booking
+        completed_bookings = obj.bookings.filter(status='completed')
+        return float(sum(booking.total_amount for booking in completed_bookings))
+    
+    def get_regions_served(self, obj):
+        return [{'id': r.id, 'name': r.name, 'code': r.code} for r in obj.regions.all()]
+    
+    def get_services_offered(self, obj):
+        services = obj.services.all()
+        return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]

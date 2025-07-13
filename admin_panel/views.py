@@ -912,3 +912,210 @@ def bulk_operations(request):
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
+        
+# Add these missing view functions to the end of admin_panel/views.py
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Verify professional",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'professional_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+            'action': openapi.Schema(type=openapi.TYPE_STRING, enum=['approve', 'reject']),
+            'notes': openapi.Schema(type=openapi.TYPE_STRING),
+        },
+        required=['professional_id', 'action']
+    ),
+    responses={200: 'Professional verification updated'}
+)
+def verify_professional(request):
+    """
+    Verify or reject professional
+    """
+    professional_id = request.data.get('professional_id')
+    action = request.data.get('action')
+    notes = request.data.get('notes', '')
+    
+    try:
+        professional = Professional.objects.get(id=professional_id)
+        
+        if action == 'approve':
+            professional.is_verified = True
+            professional.verified_at = timezone.now()
+            message = 'Professional verified successfully'
+        else:
+            professional.is_verified = False
+            professional.verified_at = None
+            message = 'Professional verification rejected'
+        
+        professional.save()
+        
+        # Log admin activity
+        AdminActivity.objects.create(
+            admin_user=request.user,
+            activity_type='professional_verification',
+            description=f"Professional verification {action}: {professional.user.email}",
+            target_model='Professional',
+            target_id=str(professional.id),
+            new_data={'action': action, 'notes': notes}
+        )
+        
+        # Send notification to professional
+        from notifications.tasks import send_professional_verification_notification
+        send_professional_verification_notification.delay(professional.id, action, notes)
+        
+        return Response({'message': message})
+        
+    except Professional.DoesNotExist:
+        return Response(
+            {'error': 'Professional not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Get analytics data",
+    responses={200: 'Analytics data'}
+)
+def analytics_data(request):
+    """
+    Get comprehensive analytics data
+    """
+    from django.db.models import Count, Sum, Avg
+    from datetime import datetime, timedelta
+    
+    # Get date range
+    days = int(request.GET.get('days', 30))
+    start_date = timezone.now() - timedelta(days=days)
+    
+    # User analytics
+    user_data = User.objects.filter(date_joined__gte=start_date).extra(
+        {'day': 'date(date_joined)'}
+    ).values('day').annotate(count=Count('id')).order_by('day')
+    
+    # Booking analytics
+    booking_data = Booking.objects.filter(created_at__gte=start_date).extra(
+        {'day': 'date(created_at)'}
+    ).values('day').annotate(
+        count=Count('id'),
+        revenue=Sum('total_amount')
+    ).order_by('day')
+    
+    # Payment analytics
+    payment_data = Payment.objects.filter(
+        created_at__gte=start_date,
+        status='succeeded'
+    ).extra(
+        {'day': 'date(created_at)'}
+    ).values('day').annotate(
+        count=Count('id'),
+        total=Sum('amount')
+    ).order_by('day')
+    
+    return Response({
+        'user_registrations': list(user_data),
+        'booking_trends': list(booking_data),
+        'payment_trends': list(payment_data),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Resolve system alert",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'alert_id': openapi.Schema(type=openapi.TYPE_STRING),
+            'resolution_notes': openapi.Schema(type=openapi.TYPE_STRING),
+        },
+        required=['alert_id']
+    ),
+    responses={200: 'Alert resolved'}
+)
+def resolve_alert(request):
+    """
+    Resolve system alert
+    """
+    alert_id = request.data.get('alert_id')
+    resolution_notes = request.data.get('resolution_notes', '')
+    
+    try:
+        alert = SystemAlert.objects.get(alert_id=alert_id)
+        alert.is_resolved = True
+        alert.resolved_by = request.user
+        alert.resolved_at = timezone.now()
+        alert.resolution_notes = resolution_notes
+        alert.save()
+        
+        return Response({'message': 'Alert resolved successfully'})
+        
+    except SystemAlert.DoesNotExist:
+        return Response(
+            {'error': 'Alert not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Assign support ticket",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'ticket_id': openapi.Schema(type=openapi.TYPE_STRING),
+            'assigned_to': openapi.Schema(type=openapi.TYPE_INTEGER),
+        },
+        required=['ticket_id', 'assigned_to']
+    ),
+    responses={200: 'Ticket assigned'}
+)
+def assign_ticket(request):
+    """
+    Assign support ticket to admin user
+    """
+    ticket_id = request.data.get('ticket_id')
+    assigned_to_id = request.data.get('assigned_to')
+    
+    try:
+        ticket = SupportTicket.objects.get(ticket_id=ticket_id)
+        assigned_to = User.objects.get(id=assigned_to_id)
+        
+        ticket.assigned_to = assigned_to
+        ticket.status = 'in_progress'
+        ticket.save()
+        
+        return Response({'message': 'Ticket assigned successfully'})
+        
+    except (SupportTicket.DoesNotExist, User.DoesNotExist):
+        return Response(
+            {'error': 'Ticket or user not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+# ===================== SYSTEM MANAGEMENT VIEWS =====================
+
+class SystemAlertsView(generics.ListAPIView):
+    """
+    List system alerts
+    """
+    permission_classes = [IsAdminUser]
+    
+    def get_queryset(self):
+        return SystemAlert.objects.filter(is_resolved=False).order_by('-created_at')
+
+
+class SupportTicketsView(generics.ListAPIView):
+    """
+    List support tickets
+    """
+    permission_classes = [IsAdminUser]
+    
+    def get_queryset(self):
+        return SupportTicket.objects.all().order_by('-created_at')

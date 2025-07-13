@@ -288,12 +288,12 @@ class ServiceReview(models.Model):
     service = models.ForeignKey(
         Service, 
         on_delete=models.CASCADE, 
-        related_name='reviews'
+        related_name='service_reviews'  # Changed from 'reviews' to 'service_reviews'
     )
     user = models.ForeignKey(
         'accounts.User', 
         on_delete=models.CASCADE,
-        related_name='service_reviews'
+        related_name='service_reviews'  # Also change this to avoid conflicts
     )
     rating = models.IntegerField(
         choices=[(i, i) for i in range(1, 6)],

@@ -1,3 +1,4 @@
+from services.models import Service
 from regions.models import Region
 from rest_framework import serializers
 from django.utils import timezone
@@ -143,7 +144,7 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
         many=True
     )
     services = serializers.PrimaryKeyRelatedField(
-        queryset=None,  # Set in __init__
+        queryset=Service.objects.none(),  # Temporary empty queryset - FIXED
         many=True
     )
     
