@@ -20,6 +20,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: labmyshare2020
           POSTGRES_DB: labmyshare_db
+          POSTGRES_USER: labmyshare
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
