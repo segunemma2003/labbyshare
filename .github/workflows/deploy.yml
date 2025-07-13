@@ -18,8 +18,8 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_labmyshare
+          POSTGRES_PASSWORD: labmyshare2020
+          POSTGRES_DB: labmyshare_db
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
