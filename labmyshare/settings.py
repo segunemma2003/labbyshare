@@ -369,36 +369,36 @@ LOGGING = {
             'formatter': 'simple'
         },
     },
-    'root': {
-        'handlers': ['console'],
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'DEBUG' if IS_LOCAL else 'INFO',
-            'propagate': False,
-        },
-        'django.db.backends': {
-            'handlers': ['console'],
-            'level': 'DEBUG' if IS_LOCAL else 'INFO',
-            'propagate': False,
-        },
-        'accounts': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'payments': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'notifications': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-    },
+    # 'root': {
+    #     'handlers': ['console'],
+    # },
+    # 'loggers': {
+    #     'django': {
+    #         'handlers': ['console'],
+    #         'level': 'DEBUG' if IS_LOCAL else 'INFO',
+    #         'propagate': False,
+    #     },
+    #     'django.db.backends': {
+    #         'handlers': ['console'],
+    #         'level': 'DEBUG' if IS_LOCAL else 'INFO',
+    #         'propagate': False,
+    #     },
+    #     'accounts': {
+    #         'handlers': ['console'],
+    #         'level': 'INFO',
+    #         'propagate': False,
+    #     },
+    #     'payments': {
+    #         'handlers': ['console'],
+    #         'level': 'INFO',
+    #         'propagate': False,
+    #     },
+    #     'notifications': {
+    #         'handlers': ['console'],
+    #         'level': 'INFO',
+    #         'propagate': False,
+    #     },
+    # },
 }
 
 # Add file logging only in production
@@ -450,13 +450,13 @@ CACHE_TIMEOUTS = {
     'AVAILABILITY': 1800,  # 30 minutes
 }
 
-# Print configuration info
-if DEBUG:
-    print(f"🔧 Django Configuration:")
-    print(f"   Environment: {'Production' if IS_PRODUCTION else 'Local Development'}")
-    print(f"   Debug: {DEBUG}")
-    print(f"   Database: {DATABASES['default']['ENGINE'].split('.')[-1]}")
-    print(f"   Allowed Hosts: {ALLOWED_HOSTS}")
-    print(f"   HTTPS: {'Enabled' if IS_PRODUCTION and globals().get('USE_TLS', False) else 'Disabled'}")
-    print(f"   Redis: {REDIS_URL}")
-    print(f"   Static Root: {STATIC_ROOT}")
+# # Print configuration info
+# if DEBUG:
+#     print(f"🔧 Django Configuration:")
+#     print(f"   Environment: {'Production' if IS_PRODUCTION else 'Local Development'}")
+#     print(f"   Debug: {DEBUG}")
+#     print(f"   Database: {DATABASES['default']['ENGINE'].split('.')[-1]}")
+#     print(f"   Allowed Hosts: {ALLOWED_HOSTS}")
+#     print(f"   HTTPS: {'Enabled' if IS_PRODUCTION and globals().get('USE_TLS', False) else 'Disabled'}")
+#     print(f"   Redis: {REDIS_URL}")
+#     print(f"   Static Root: {STATIC_ROOT}")

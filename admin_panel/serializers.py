@@ -13,7 +13,6 @@ from services.models import Category, Service, AddOn, RegionalPricing
 from regions.models import Region, RegionalSettings
 from notifications.models import Notification
 
-
 # ===================== USER MANAGEMENT SERIALIZERS =====================
 
 class AdminUserCreateSerializer(serializers.ModelSerializer):
@@ -277,7 +276,7 @@ class AdminAddOnSerializer(serializers.ModelSerializer):
 
 class AdminBookingSerializer(serializers.ModelSerializer):
     """
-    Booking management by admin
+    Booking management by admin - FIXED field names
     """
     customer_name = serializers.CharField(source='customer.get_full_name', read_only=True)
     customer_email = serializers.CharField(source='customer.email', read_only=True)
@@ -292,21 +291,19 @@ class AdminBookingSerializer(serializers.ModelSerializer):
             'professional', 'professional_name', 'service', 'service_name',
             'region', 'region_name', 'scheduled_date', 'scheduled_time',
             'duration_minutes', 'total_amount', 'status', 'payment_status',
-            'booking_for_self', 'recipient_name', 'notes', 'created_at'
+            'booking_for_self', 'recipient_name', 'customer_notes', 'created_at'  # Fixed: customer_notes instead of notes
         ]
-
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
-    Update booking by admin
+    Update booking by admin - FIXED field names
     """
     class Meta:
         model = Booking
         fields = [
             'status', 'payment_status', 'scheduled_date', 'scheduled_time',
-            'professional_notes', 'admin_notes'
+            'professional_notes', 'admin_notes'  # Fixed: use correct field names
         ]
-
 
 # ===================== PAYMENT MANAGEMENT SERIALIZERS =====================
 
@@ -544,3 +541,37 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     def get_services_offered(self, obj):
         services = obj.services.all()
         return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]
+    
+    
+
+class SystemAlertSerializer(serializers.ModelSerializer):
+    """
+    System alert serializer for admin
+    """
+    related_user_name = serializers.CharField(source='related_user.get_full_name', read_only=True)
+    resolved_by_name = serializers.CharField(source='resolved_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = SystemAlert
+        fields = [
+            'alert_id', 'title', 'message', 'alert_type', 'category',
+            'related_user', 'related_user_name', 'related_booking', 'related_payment',
+            'is_resolved', 'resolved_by', 'resolved_by_name', 'resolved_at',
+            'resolution_notes', 'created_at'
+        ]
+
+
+class SupportTicketSerializer(serializers.ModelSerializer):
+    """
+    Support ticket serializer for admin
+    """
+    customer_name = serializers.CharField(source='customer.get_full_name', read_only=True)
+    assigned_to_name = serializers.CharField(source='assigned_to.get_full_name', read_only=True)
+    
+    class Meta:
+        model = SupportTicket
+        fields = [
+            'ticket_id', 'customer', 'customer_name', 'subject', 'description',
+            'category', 'priority', 'status', 'assigned_to', 'assigned_to_name',
+            'related_booking', 'created_at', 'updated_at', 'resolved_at'
+        ]

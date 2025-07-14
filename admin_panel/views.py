@@ -22,6 +22,7 @@ from notifications.models import Notification
 from utils.permissions import IsAdminUser
 
 
+
 # ===================== DASHBOARD & ANALYTICS =====================
 
 class AdminDashboardView(generics.GenericAPIView):
@@ -932,8 +933,12 @@ def bulk_operations(request):
 )
 def verify_professional(request):
     """
-    Verify or reject professional
+    Verify or reject professional - ADD swagger_fake_view check
     """
+    # Handle schema generation
+    if getattr(request, 'swagger_fake_view', False):
+        return Response({'message': 'Schema generation'})
+        
     professional_id = request.data.get('professional_id')
     action = request.data.get('action')
     notes = request.data.get('notes', '')
@@ -973,6 +978,7 @@ def verify_professional(request):
             {'error': 'Professional not found'},
             status=status.HTTP_404_NOT_FOUND
         )
+
 
 
 @api_view(['GET'])
@@ -1103,19 +1109,33 @@ def assign_ticket(request):
 
 class SystemAlertsView(generics.ListAPIView):
     """
-    List system alerts
+    List system alerts - FIXED serializer_class
     """
+    serializer_class = SystemAlertSerializer  # Fixed: Added missing serializer_class
     permission_classes = [IsAdminUser]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['alert_type', 'category', 'is_resolved']
+    ordering = ['-created_at']
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return SystemAlert.objects.none()
         return SystemAlert.objects.filter(is_resolved=False).order_by('-created_at')
 
 
 class SupportTicketsView(generics.ListAPIView):
     """
-    List support tickets
+    List support tickets - FIXED serializer_class
     """
+    serializer_class = SupportTicketSerializer  # Fixed: Added missing serializer_class
     permission_classes = [IsAdminUser]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['status', 'priority', 'category', 'assigned_to']
+    ordering = ['-created_at']
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return SupportTicket.objects.none()
         return SupportTicket.objects.all().order_by('-created_at')
