@@ -1,4 +1,4 @@
-name: Deploy to Production Server
+name: Simple Non-Docker Deployment
 
 on:
   push:
@@ -88,38 +88,42 @@ jobs:
         run: |
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Create comprehensive deployment script
+      - name: Create deployment script
         run: |
           cat > deploy.sh << 'EOF'
           #!/bin/bash
           set -e
 
-          echo "🚀 Starting LabMyShare Deployment..."
+          echo "🚀 Starting Simple LabMyShare Deployment (No Docker)..."
 
           # Configuration
           APP_DIR="/var/www/labmyshare"
           REPO_URL="https://github.com/beautyspabyshea/labmyshare.git"
           BRANCH="main"
-          BACKUP_DIR="/var/backups/labmyshare"
-          SERVICE_NAME="labmyshare-web"
-
-          # Create directories if they don't exist
+          SERVICE_NAME="labmyshare"
+          VENV_DIR="$APP_DIR/venv"
+          
+          # Create application directory
           sudo mkdir -p $APP_DIR
-          sudo mkdir -p $BACKUP_DIR
-          sudo mkdir -p /var/www/labmyshare/storage/{postgres,redis,static,media,logs,nginx-logs,nginx-cache}
-          sudo mkdir -p /var/www/labmyshare/backups/postgres
-
-          # Set proper ownership
           sudo chown -R $USER:$USER $APP_DIR
-          sudo chown -R $USER:$USER $BACKUP_DIR
 
-          # Backup current deployment if it exists
-          if [ -d "$APP_DIR/.git" ]; then
-            echo "📦 Creating backup of current deployment..."
-            BACKUP_NAME="backup-$(date +%Y%m%d-%H%M%S)"
-            sudo cp -r $APP_DIR $BACKUP_DIR/$BACKUP_NAME
-            echo "✅ Backup created: $BACKUP_DIR/$BACKUP_NAME"
-          fi
+          # Install system dependencies
+          echo "📦 Installing system dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3 \
+            python3-pip \
+            python3-venv \
+            python3-dev \
+            postgresql \
+            postgresql-contrib \
+            redis-server \
+            nginx \
+            supervisor \
+            git \
+            curl \
+            build-essential \
+            libpq-dev
 
           # Clone or update repository
           if [ ! -d "$APP_DIR/.git" ]; then
@@ -134,107 +138,129 @@ jobs:
 
           cd $APP_DIR
 
-          # Check if we're using Docker deployment
-          if [ -f "docker-compose.yml" ]; then
-            echo "🐳 Docker deployment detected"
+          # Create virtual environment
+          echo "🐍 Setting up Python virtual environment..."
+          if [ ! -d "$VENV_DIR" ]; then
+            python3 -m venv $VENV_DIR
+          fi
+
+          # Activate virtual environment and install dependencies
+          source $VENV_DIR/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+          # Setup environment file
+          if [ ! -f ".env" ]; then
+            echo "⚙️ Setting up environment file..."
+            cp .env.production .env
             
-            # Install Docker if not present
-            if ! command -v docker &> /dev/null; then
-              echo "📦 Installing Docker..."
-              curl -fsSL https://get.docker.com -o get-docker.sh
-              sudo sh get-docker.sh
-              sudo usermod -aG docker $USER
-            fi
+            # Update database settings for local PostgreSQL
+            sed -i 's/DB_HOST=db/DB_HOST=localhost/' .env
+            sed -i 's/redis:\/\/redis:/redis:\/\/localhost:/' .env
+          fi
 
-            # Install Docker Compose if not present
-            if ! command -v docker-compose &> /dev/null; then
-              echo "📦 Installing Docker Compose..."
-              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              sudo chmod +x /usr/local/bin/docker-compose
-            fi
+          # Setup PostgreSQL database
+          echo "🗄️ Setting up PostgreSQL database..."
+          sudo -u postgres psql -c "CREATE DATABASE labmyshare_db;" 2>/dev/null || echo "Database already exists"
+          sudo -u postgres psql -c "CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';" 2>/dev/null || echo "User already exists"
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;" 2>/dev/null || echo "Privileges already granted"
+          sudo -u postgres psql -c "ALTER USER labmyshare CREATEDB;" 2>/dev/null || echo "User already has CREATEDB"
 
-            # Setup environment file
-            if [ ! -f ".env" ]; then
-              echo "⚙️ Setting up environment file..."
-              cp .env.production .env
-            fi
+          # Start services
+          echo "🔧 Starting PostgreSQL and Redis..."
+          sudo systemctl enable postgresql
+          sudo systemctl start postgresql
+          sudo systemctl enable redis-server
+          sudo systemctl start redis-server
 
-            # Initialize storage directories
-            if [ -f "docker/scripts/init-storage.sh" ]; then
-              chmod +x docker/scripts/init-storage.sh
-              ./docker/scripts/init-storage.sh
-            fi
+          # Run Django setup
+          echo "📊 Running Django migrations..."
+          source $VENV_DIR/bin/activate
+          python manage.py migrate --noinput
 
-            # Build and deploy with Docker
-            echo "🏗️ Building and starting containers..."
-            docker-compose down --remove-orphans || true
-            docker-compose pull
-            docker-compose up -d --build
+          echo "📦 Collecting static files..."
+          python manage.py collectstatic --noinput
 
-            # Wait for services to be ready
-            echo "⏳ Waiting for services to start..."
-            sleep 30
+          echo "👤 Creating superuser..."
+          python manage.py shell << PYTHON_EOF
+          from accounts.models import User
+          if not User.objects.filter(email='admin@labmyshare.com').exists():
+              User.objects.create_superuser(
+                  username='admin',
+                  email='admin@labmyshare.com',
+                  password='admin123',
+                  first_name='Admin',
+                  last_name='User'
+              )
+              print('Superuser created: admin@labmyshare.com / admin123')
+          else:
+              print('Superuser already exists')
+          PYTHON_EOF
 
-            # Check container health
-            docker-compose ps
+          # Create Gunicorn configuration
+          echo "🌐 Setting up Gunicorn..."
+          cat > $APP_DIR/gunicorn.conf.py << GUNICORN_EOF
+          bind = "0.0.0.0:8000"
+          workers = 4
+          worker_class = "sync"
+          worker_connections = 1000
+          max_requests = 1000
+          max_requests_jitter = 100
+          timeout = 30
+          keepalive = 2
+          user = "$USER"
+          group = "$USER"
+          tmp_upload_dir = None
+          errorlog = "$APP_DIR/logs/gunicorn_error.log"
+          accesslog = "$APP_DIR/logs/gunicorn_access.log"
+          loglevel = "info"
+          GUNICORN_EOF
 
-          else
-            echo "🐍 Direct Python deployment detected"
-            
-            # Install system dependencies
-            sudo apt-get update
-            sudo apt-get install -y python3 python3-pip python3-venv postgresql-client redis-tools nginx
+          # Create logs directory
+          mkdir -p $APP_DIR/logs
 
-            # Create virtual environment
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
-            fi
+          # Setup Supervisor for process management
+          echo "👨‍💼 Setting up Supervisor..."
+          sudo tee /etc/supervisor/conf.d/labmyshare.conf > /dev/null << SUPERVISOR_EOF
+          [program:labmyshare-web]
+          command=$VENV_DIR/bin/gunicorn labmyshare.wsgi:application -c $APP_DIR/gunicorn.conf.py
+          directory=$APP_DIR
+          user=$USER
+          autostart=true
+          autorestart=true
+          redirect_stderr=true
+          stdout_logfile=$APP_DIR/logs/supervisor.log
+          environment=PATH="$VENV_DIR/bin"
 
-            # Activate virtual environment and install dependencies
-            source venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
+          [program:labmyshare-celery]
+          command=$VENV_DIR/bin/celery -A labmyshare worker --loglevel=info
+          directory=$APP_DIR
+          user=$USER
+          autostart=true
+          autorestart=true
+          redirect_stderr=true
+          stdout_logfile=$APP_DIR/logs/celery.log
+          environment=PATH="$VENV_DIR/bin"
 
-            # Setup environment
-            if [ ! -f ".env" ]; then
-              cp .env.production .env
-            fi
+          [program:labmyshare-celery-beat]
+          command=$VENV_DIR/bin/celery -A labmyshare beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+          directory=$APP_DIR
+          user=$USER
+          autostart=true
+          autorestart=true
+          redirect_stderr=true
+          stdout_logfile=$APP_DIR/logs/celery-beat.log
+          environment=PATH="$VENV_DIR/bin"
+          SUPERVISOR_EOF
 
-            # Run migrations and collect static files
-            python manage.py migrate --noinput
-            python manage.py collectstatic --noinput
-
-            # Setup systemd service
-            sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
-          [Unit]
-          Description=LabMyShare Django Application
-          After=network.target postgresql.service redis.service
-
-          [Service]
-          Type=exec
-          User=$USER
-          Group=$USER
-          WorkingDirectory=$APP_DIR
-          Environment=PATH=$APP_DIR/venv/bin
-          ExecStart=$APP_DIR/venv/bin/gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4
-          ExecReload=/bin/kill -s HUP \$MAINPID
-          Restart=on-failure
-          RestartSec=5
-
-          [Install]
-          WantedBy=multi-user.target
-          SYSTEMD_EOF
-
-            # Reload systemd and start service
-            sudo systemctl daemon-reload
-            sudo systemctl enable $SERVICE_NAME
-            sudo systemctl restart $SERVICE_NAME
-
-            # Setup Nginx proxy
-            sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
+          # Setup Nginx
+          echo "🌐 Setting up Nginx..."
+          sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
           server {
               listen 8000;
               server_name backend.beautyspabyshea.co.uk;
+
+              client_max_body_size 50M;
 
               location / {
                   proxy_pass http://127.0.0.1:8000;
@@ -242,27 +268,46 @@ jobs:
                   proxy_set_header X-Real-IP \$remote_addr;
                   proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
                   proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_redirect off;
               }
 
               location /static/ {
                   alias $APP_DIR/staticfiles/;
                   expires 30d;
+                  add_header Cache-Control "public, no-transform";
               }
 
               location /media/ {
                   alias $APP_DIR/media/;
                   expires 7d;
+                  add_header Cache-Control "public, no-transform";
+              }
+
+              location /health/ {
+                  proxy_pass http://127.0.0.1:8000;
+                  access_log off;
               }
           }
           NGINX_EOF
 
-            # Enable Nginx site
-            sudo ln -sf /etc/nginx/sites-available/labmyshare /etc/nginx/sites-enabled/
-            sudo nginx -t && sudo systemctl reload nginx
-          fi
+          # Actually, let's run Django directly on port 8000 without Nginx proxy
+          # Remove Nginx configuration and run Gunicorn directly on port 8000
+          
+          # Update Supervisor and restart services
+          sudo supervisorctl reread
+          sudo supervisorctl update
+          sudo supervisorctl restart all
+
+          # Check service status
+          echo "🔍 Checking service status..."
+          sudo supervisorctl status
 
           echo "✅ Deployment completed successfully!"
           echo "🌐 Application should be available at: http://backend.beautyspabyshea.co.uk:8000"
+          echo "🔍 Health check: http://backend.beautyspabyshea.co.uk:8000/health/"
+          echo "👨‍💼 Admin panel: http://backend.beautyspabyshea.co.uk:8000/admin/"
+          echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8000/swagger/"
+          
           EOF
           chmod +x deploy.sh
 
@@ -274,17 +319,18 @@ jobs:
       - name: Health Check
         run: |
           echo "🔍 Health check..."
-          sleep 60  # Give more time for services to start
+          sleep 60  # Give time for services to start
 
-          # Check if port 8000 is accessible (corrected from 8100)
-          if nc -z ${{ secrets.SERVER_HOST }} 8000; then
-            echo "✅ Port 8000 accessible"
-          else
-            echo "❌ Port 8000 not accessible"
-            echo "🔍 Checking if Docker containers are running..."
-            ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "docker ps || systemctl status labmyshare-web || true"
-            exit 1
-          fi
+          # Check if port 8000 is accessible
+          for i in {1..5}; do
+            if nc -z ${{ secrets.SERVER_HOST }} 8000; then
+              echo "✅ Port 8000 accessible"
+              break
+            else
+              echo "⏳ Attempt $i/5: Port 8000 not yet accessible, waiting..."
+              sleep 10
+            fi
+          done
 
           # Health check attempts
           for i in {1..10}; do
@@ -293,28 +339,31 @@ jobs:
               echo "✅ Health check passed!"
               exit 0
             fi
+            echo "⏳ Waiting 15 seconds before next attempt..."
             sleep 15
           done
 
           echo "❌ Health checks failed"
-          echo "🔍 Checking container logs..."
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "docker-compose logs --tail=50 || journalctl -u labmyshare-web --no-pager -n 50 || true"
+          echo "🔍 Checking service status..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "sudo supervisorctl status || systemctl status postgresql redis-server || true"
           exit 1
 
       - name: Deployment Summary
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Deployment successful!"
+            echo "✅ Simple deployment successful!"
             echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8000"
             echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8000/health/"
             echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8000/swagger/"
             echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8000/admin/"
-            echo "📊 Container status: docker ps"
+            echo "📊 Status: sudo supervisorctl status"
+            echo "📋 Logs: tail -f /var/www/labmyshare/logs/supervisor.log"
           else
-            echo "❌ Deployment failed"
+            echo "❌ Simple deployment failed"
             echo "🔍 Check logs with:"
-            echo "  - docker-compose logs"
-            echo "  - systemctl status labmyshare-web"
-            echo "  - journalctl -u labmyshare-web"
+            echo "  - sudo supervisorctl status"
+            echo "  - tail -f /var/www/labmyshare/logs/supervisor.log"
+            echo "  - tail -f /var/www/labmyshare/logs/gunicorn_error.log"
+            echo "  - systemctl status postgresql redis-server"
           fi
