@@ -578,7 +578,32 @@ jobs:
             
             # Start remaining services
             docker compose up -d
-            sleep 30
+            
+            # Wait for ALL services to be ready
+            echo "⏳ Waiting for all services..."
+            sleep 45
+            
+            # Verify nginx is running and listening
+            echo "🌐 Verifying nginx is ready..."
+            timeout=90
+            counter=0
+            while [ $counter -lt $timeout ]; do
+              if docker compose ps nginx | grep -q "Up" && netstat -tulpn | grep -q ":8080.*LISTEN"; then
+                echo "✅ Nginx is ready and listening!"
+                break
+              fi
+              counter=$((counter + 5))
+              if [ $counter -eq $timeout ]; then
+                echo "❌ Nginx failed to start properly"
+                echo "=== Nginx Container Status ==="
+                docker compose ps nginx
+                echo "=== Nginx Logs ==="
+                docker compose logs nginx
+                exit 1
+              fi
+              echo "⏳ Waiting for nginx to start... ($counter/$timeout seconds)"
+              sleep 5
+            done
             
             # Run Django setup
             echo "⚙️ Django setup..."
@@ -586,16 +611,52 @@ jobs:
             docker compose exec -T web python manage.py collectstatic --noinput
             docker compose exec -T web python manage.py create_initial_data
             
-            # Configure firewall
+            # Configure firewall EARLY
             echo "🔥 Configuring firewall..."
             if command -v ufw >/dev/null 2>&1; then
-              sudo ufw allow 8080/tcp || true
               sudo ufw allow 22/tcp || true
+              sudo ufw allow 8080/tcp || true
+              echo "✅ Firewall configured"
             fi
             
-            # Final restart
+            # Final restart and extended wait
+            echo "🔄 Final service restart..."
             docker compose restart web nginx
-            sleep 20
+            sleep 30
+            
+            # Wait specifically for nginx to be ready
+            echo "⏳ Waiting for nginx to be ready..."
+            timeout=120
+            counter=0
+            while [ $counter -lt $timeout ]; do
+              if netstat -tulpn | grep -q ":8080.*LISTEN"; then
+                echo "✅ Nginx is listening on port 8080"
+                break
+              fi
+              counter=$((counter + 5))
+              if [ $counter -eq $timeout ]; then
+                echo "❌ Nginx failed to listen on port 8080"
+                echo "=== Nginx Container Status ==="
+                docker compose ps nginx
+                echo "=== Nginx Logs ==="
+                docker compose logs nginx --tail=50
+                echo "=== Port Status ==="
+                netstat -tulpn | grep -E ":(80|8080)"
+                exit 1
+              fi
+              echo "⏳ Waiting for nginx... ($counter/$timeout seconds)"
+              sleep 5
+            done
+            
+            # Test internal connectivity before finishing
+            echo "🔍 Testing internal connectivity..."
+            if curl -f -m 10 http://localhost:8080/health/ > /dev/null 2>&1; then
+              echo "✅ Internal health check passed"
+            else
+              echo "❌ Internal health check failed"
+              docker compose logs web nginx --tail=30
+              exit 1
+            fi
             
             # Show status
             echo "📊 Final status:"
@@ -612,27 +673,62 @@ jobs:
 
       - name: Health Check
         run: |
-          echo "🔍 Health check..."
+          echo "🔍 Starting comprehensive health check..."
           
-          # Test connectivity
-          if nc -z ${{ secrets.SERVER_HOST }} 8080; then
-            echo "✅ Port 8080 accessible"
+          # Wait extra time for services to fully start
+          echo "⏳ Waiting 60 seconds for all services to stabilize..."
+          sleep 60
+          
+          # Check server connectivity first
+          echo "🌐 Testing server connectivity..."
+          if ! ping -c 1 ${{ secrets.SERVER_HOST }} > /dev/null 2>&1; then
+            echo "❌ Server ${{ secrets.SERVER_HOST }} is not reachable"
+            exit 1
+          fi
+          echo "✅ Server is reachable"
+          
+          # Get detailed status from server
+          echo "📊 Getting detailed server status..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Container Status ===" && docker compose ps && echo "=== Port Status ===" && netstat -tulpn | grep -E ":(8000|8080)" && echo "=== Nginx Status ===" && docker compose logs nginx --tail=10'
+          
+          # Test port accessibility with timeout
+          echo "🔌 Testing port 8080 accessibility..."
+          if timeout 10 nc -z ${{ secrets.SERVER_HOST }} 8080; then
+            echo "✅ Port 8080 is accessible"
           else
-            echo "❌ Port 8080 not accessible"
+            echo "❌ Port 8080 is not accessible"
+            echo "🔍 Debugging port issue..."
+            ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== UFW Status ===" && sudo ufw status && echo "=== Nginx Container Logs ===" && docker compose logs nginx && echo "=== All Container Status ===" && docker compose ps'
             exit 1
           fi
           
-          # Test endpoints
-          for i in {1..5}; do
-            echo "Health check attempt $i/5..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8080/health/" 2>&1; then
-              echo "✅ Health check passed!"
-              exit 0
+          # Test endpoints with better error handling
+          echo "🏥 Testing application endpoints..."
+          for i in {1..8}; do
+            echo "Health check attempt $i/8..."
+            
+            # Test different endpoints with verbose output
+            for endpoint in "/health/" "/health" "/"; do
+              echo "Testing endpoint: http://backend.beautyspabyshea.co.uk:8080$endpoint"
+              
+              if curl -v -f -m 20 "http://backend.beautyspabyshea.co.uk:8080$endpoint" 2>&1; then
+                echo "✅ Health check passed on $endpoint!"
+                echo "🎉 Deployment successful and verified!"
+                exit 0
+              else
+                echo "❌ Failed on $endpoint"
+              fi
+            done
+            
+            if [ $i -lt 8 ]; then
+              echo "⏳ Waiting 30 seconds before retry..."
+              sleep 30
             fi
-            sleep 20
           done
           
-          echo "❌ Health checks failed"
+          echo "❌ All health check attempts failed"
+          echo "🔍 Final diagnostics..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Final Container Status ===" && docker compose ps && echo "=== Web Service Logs ===" && docker compose logs web --tail=100 && echo "=== Nginx Logs ===" && docker compose logs nginx --tail=50'
           exit 1
 
       - name: Deployment Summary
