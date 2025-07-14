@@ -289,6 +289,10 @@ jobs:
           EMAIL_HOST_USER=resend
           EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
           DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
+          STATIC_ROOT=/var/www/labmyshare/staticfiles
+          STATIC_URL=/static/
+          MEDIA_ROOT=/var/www/labmyshare/media
+          MEDIA_URL=/media/
           ENVEND
           
           # Set permissions
@@ -296,7 +300,12 @@ jobs:
           sudo chmod 600 $APP_DIR/.env
           
           # Create directories
-          sudo -u $APP_USER mkdir -p static media logs
+          echo "📁 Creating application directories..."
+          sudo -u $APP_USER mkdir -p static media logs staticfiles
+          
+          # Set proper permissions for static and media directories
+          sudo chmod 755 $APP_DIR/static $APP_DIR/media $APP_DIR/staticfiles $APP_DIR/logs
+          sudo chown -R $APP_USER:$APP_USER $APP_DIR/static $APP_DIR/media $APP_DIR/staticfiles $APP_DIR/logs
           
           # Run Django setup
           echo "⚙️ Django setup..."
@@ -311,6 +320,21 @@ jobs:
           fi
           echo "✅ Django database connection successful"
           
+          # Check Django static files configuration
+          echo "📦 Checking Django static files configuration..."
+          sudo -u $APP_USER ./venv/bin/python manage.py shell << 'CHECKSTATIC'
+          from django.conf import settings
+          import os
+          print(f"STATIC_ROOT: {getattr(settings, 'STATIC_ROOT', 'NOT SET')}")
+          print(f"STATIC_URL: {getattr(settings, 'STATIC_URL', 'NOT SET')}")
+          print(f"STATICFILES_DIRS: {getattr(settings, 'STATICFILES_DIRS', 'NOT SET')}")
+          if hasattr(settings, 'STATIC_ROOT') and settings.STATIC_ROOT:
+              static_root = str(settings.STATIC_ROOT)
+              print(f"STATIC_ROOT directory exists: {os.path.exists(static_root)}")
+              if os.path.exists(static_root):
+                  print(f"STATIC_ROOT is writable: {os.access(static_root, os.W_OK)}")
+          CHECKSTATIC
+          
           # Run migrations with verbose output
           echo "📊 Running database migrations..."
           if ! sudo -u $APP_USER ./venv/bin/python manage.py migrate --noinput --verbosity=2; then
@@ -321,9 +345,16 @@ jobs:
           fi
           echo "✅ Migrations completed successfully"
           
-          # Collect static files
+          # Collect static files with error handling
           echo "📦 Collecting static files..."
-          sudo -u $APP_USER ./venv/bin/python manage.py collectstatic --noinput --verbosity=2
+          if ! sudo -u $APP_USER ./venv/bin/python manage.py collectstatic --noinput --verbosity=2; then
+            echo "❌ Static files collection failed"
+            echo "🔍 Checking static files setup..."
+            sudo -u $APP_USER ls -la $APP_DIR/
+            sudo -u $APP_USER ls -la $APP_DIR/staticfiles/ || echo "staticfiles directory doesn't exist"
+            exit 1
+          fi
+          echo "✅ Static files collected successfully"
           
           # Create superuser
           echo "👤 Creating superuser..."
@@ -406,13 +437,15 @@ jobs:
               }
               
               location /static/ {
-                  alias /var/www/labmyshare/static/;
+                  alias /var/www/labmyshare/staticfiles/;
                   expires 30d;
+                  add_header Cache-Control "public, immutable";
               }
               
               location /media/ {
                   alias /var/www/labmyshare/media/;
                   expires 7d;
+                  add_header Cache-Control "public";
               }
           }
           NGINXEND
