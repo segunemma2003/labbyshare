@@ -157,123 +157,10 @@ jobs:
         run: |
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to Production Server
+      - name: Create deployment files
         run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} << 'DEPLOY_EOF'
-            set -e
-            
-            echo "🚀 Starting LabMyShare deployment..."
-            
-            # Navigate to application directory
-            cd /var/www/labmyshare
-            
-            # Backup current setup
-            if [ -f docker-compose.yml ]; then
-              cp docker-compose.yml docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)
-              echo "✅ Backup created"
-            fi
-            
-            # Pull latest code
-            echo "📥 Pulling latest code..."
-            git fetch origin
-            git reset --hard origin/main
-            
-            # Create required directories
-            echo "📁 Creating directories..."
-            mkdir -p docker/nginx docker/scripts accounts/management/commands storage/{postgres,redis,static,media,logs,nginx-logs} backups/postgres
-            
-            # Set proper permissions
-            chmod 755 storage/{redis,static,media,logs,nginx-logs}
-            chmod 700 storage/postgres
-            
-            # Create nginx configuration
-            echo "⚙️ Creating nginx config..."
-            cat > docker/nginx/nginx.conf << 'NGINX_CONF'
-          user nginx;
-          worker_processes auto;
-          error_log /var/log/nginx/error.log warn;
-          pid /var/run/nginx.pid;
-          events {
-            worker_connections 1024;
-          }
-          http {
-            include /etc/nginx/mime.types;
-            default_type application/octet-stream;
-            sendfile on;
-            keepalive_timeout 65;
-            include /etc/nginx/conf.d/*.conf;
-          }
-          NGINX_CONF
-            
-            cat > docker/nginx/http-only.conf << 'HTTP_CONF'
-          upstream labmyshare {
-            server web:8000;
-          }
-          server {
-            listen 80;
-            server_name backend.beautyspabyshea.co.uk localhost;
-            
-            location / {
-              proxy_pass http://labmyshare;
-              proxy_set_header Host \$host;
-              proxy_set_header X-Real-IP \$remote_addr;
-              proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto \$scheme;
-              proxy_connect_timeout 60s;
-              proxy_send_timeout 60s;
-              proxy_read_timeout 60s;
-            }
-            
-            location /health/ {
-              proxy_pass http://labmyshare;
-              access_log off;
-            }
-            
-            location /static/ {
-              alias /var/www/static/;
-              expires 30d;
-            }
-            
-            location /media/ {
-              alias /var/www/media/;
-              expires 7d;
-            }
-          }
-          HTTP_CONF
-            
-            # Create management command
-            echo "📝 Creating management commands..."
-            touch accounts/management/__init__.py
-            touch accounts/management/commands/__init__.py
-            
-            cat > accounts/management/commands/create_initial_data.py << 'MGMT_CMD'
-          from django.core.management.base import BaseCommand
-          from django.contrib.auth import get_user_model
-          
-          User = get_user_model()
-          
-          class Command(BaseCommand):
-              help = "Create initial data"
-              
-              def handle(self, *args, **options):
-                  try:
-                      admin_email = "admin@labmyshare.com"
-                      if not User.objects.filter(email=admin_email).exists():
-                          User.objects.create_superuser(
-                              username="admin",
-                              email=admin_email,
-                              password="admin123"
-                          )
-                          print("✅ Superuser created")
-                      else:
-                          print("ℹ️  Superuser already exists")
-                  except Exception as e:
-                      print(f"❌ Error: {e}")
-          MGMT_CMD
-            
-            # Create fixed docker-compose.yml without version
-            echo "🐳 Creating docker-compose configuration..."
-            cat > docker-compose.yml << 'COMPOSE_EOF'
+          # Create docker-compose.yml
+          cat > docker-compose.fixed.yml << 'EOF'
           services:
             db:
               container_name: labmyshare_db
@@ -430,7 +317,7 @@ jobs:
               command: >
                 sh -c "
                   until nc -z db 5432; do sleep 5; done &&
-                  echo '0 2 * * * cd /backups && pg_dump -h db -U labmyshare -d labmyshare_db > backup_\$(date +\\%Y\\%m\\%d_\\%H\\%M\\%S).sql' | crontab - &&
+                  echo '0 2 * * * cd /backups && pg_dump -h db -U labmyshare -d labmyshare_db > backup_$$(date +%%Y%%m%%d_%%H%%M%%S).sql' | crontab - &&
                   crond -f
                 "
               depends_on:
@@ -480,11 +367,91 @@ jobs:
           networks:
             labmyshare_network:
               driver: bridge
-          COMPOSE_EOF
+          EOF
+
+          # Create nginx config
+          cat > nginx.conf << 'EOF'
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log warn;
+          pid /var/run/nginx.pid;
+          events {
+            worker_connections 1024;
+          }
+          http {
+            include /etc/nginx/mime.types;
+            default_type application/octet-stream;
+            sendfile on;
+            keepalive_timeout 65;
+            include /etc/nginx/conf.d/*.conf;
+          }
+          EOF
+
+          # Create nginx site config
+          cat > http-only.conf << 'EOF'
+          upstream labmyshare {
+            server web:8000;
+          }
+          server {
+            listen 80;
+            server_name backend.beautyspabyshea.co.uk localhost;
             
-            # Create .env file with exact database settings
-            echo "🔑 Creating environment file..."
-            cat > .env << 'ENV_EOF'
+            location / {
+              proxy_pass http://labmyshare;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_connect_timeout 60s;
+              proxy_send_timeout 60s;
+              proxy_read_timeout 60s;
+            }
+            
+            location /health/ {
+              proxy_pass http://labmyshare;
+              access_log off;
+            }
+            
+            location /static/ {
+              alias /var/www/static/;
+              expires 30d;
+            }
+            
+            location /media/ {
+              alias /var/www/media/;
+              expires 7d;
+            }
+          }
+          EOF
+
+          # Create management command
+          cat > create_initial_data.py << 'EOF'
+          from django.core.management.base import BaseCommand
+          from django.contrib.auth import get_user_model
+          
+          User = get_user_model()
+          
+          class Command(BaseCommand):
+              help = "Create initial data"
+              
+              def handle(self, *args, **options):
+                  try:
+                      admin_email = "admin@labmyshare.com"
+                      if not User.objects.filter(email=admin_email).exists():
+                          User.objects.create_superuser(
+                              username="admin",
+                              email=admin_email,
+                              password="admin123"
+                          )
+                          print("✅ Superuser created")
+                      else:
+                          print("ℹ️  Superuser already exists")
+                  except Exception as e:
+                      print(f"❌ Error: {e}")
+          EOF
+
+          # Create .env file
+          cat > production.env << 'EOF'
           SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
           DEBUG=False
           ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
@@ -502,57 +469,114 @@ jobs:
           EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
           DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
           GITHUB_REPOSITORY=${{ github.repository }}
-          ENV_EOF
+          EOF
+
+      - name: Copy files to server
+        run: |
+          scp docker-compose.fixed.yml ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+          scp nginx.conf ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+          scp http-only.conf ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+          scp create_initial_data.py ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+          scp production.env ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+
+      - name: Deploy to Production Server
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' << 'DEPLOY_SCRIPT'
+            set -e
+            
+            echo "🚀 Starting LabMyShare deployment..."
+            
+            # Navigate to application directory
+            cd /var/www/labmyshare
+            
+            # Backup current setup
+            if [ -f docker-compose.yml ]; then
+              cp docker-compose.yml docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)
+              echo "✅ Backup created"
+            fi
+            
+            # Pull latest code
+            echo "📥 Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Create directories
+            echo "📁 Creating directories..."
+            mkdir -p docker/nginx docker/scripts accounts/management/commands
+            mkdir -p storage/{postgres,redis,static,media,logs,nginx-logs}
+            mkdir -p backups/postgres
+            
+            # Set permissions
+            chmod 755 storage/{redis,static,media,logs,nginx-logs}
+            chmod 700 storage/postgres
+            
+            # Copy deployment files
+            echo "📋 Setting up configuration files..."
+            cp /tmp/docker-compose.fixed.yml docker-compose.yml
+            cp /tmp/nginx.conf docker/nginx/nginx.conf
+            cp /tmp/http-only.conf docker/nginx/http-only.conf
+            cp /tmp/production.env .env
+            
+            # Setup management command
+            touch accounts/management/__init__.py
+            touch accounts/management/commands/__init__.py
+            cp /tmp/create_initial_data.py accounts/management/commands/
             
             # Docker login
             echo "🐳 Logging into Docker registry..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             
             # Complete cleanup
-            echo "🧹 Stopping and cleaning up existing containers..."
-            docker compose down -v --remove-orphans || true
-            docker stop \$(docker ps -q) 2>/dev/null || true
+            echo "🧹 Cleaning up existing deployment..."
+            docker compose down --volumes --remove-orphans || true
+            
+            # Stop any running containers
+            CONTAINERS=$(docker ps -q)
+            if [ ! -z "$CONTAINERS" ]; then
+              docker stop $CONTAINERS
+            fi
             docker container prune -f
             
-            # Kill processes on required ports
+            # Kill processes on ports
             echo "🔓 Freeing up ports..."
             sudo fuser -k 8000/tcp 2>/dev/null || true
             sudo fuser -k 8080/tcp 2>/dev/null || true
             sudo fuser -k 5432/tcp 2>/dev/null || true
             sudo fuser -k 6379/tcp 2>/dev/null || true
             
-            # Wait for cleanup
             sleep 10
             
-            # Pull latest images
-            echo "📥 Pulling latest images..."
+            # Pull images
+            echo "📥 Pulling Docker images..."
             docker compose pull
             
-            # Start services in correct order
-            echo "🗄️ Starting database and redis..."
+            # Start database and redis first
+            echo "🗄️ Starting core services..."
             docker compose up -d db redis
             
             # Wait for database
-            echo "⏳ Waiting for database to be ready..."
+            echo "⏳ Waiting for database..."
             timeout=60
-            for i in \$(seq 1 \$timeout); do
+            counter=0
+            while [ $counter -lt $timeout ]; do
               if docker compose exec -T db pg_isready -U labmyshare -d labmyshare_db > /dev/null 2>&1; then
-                echo "✅ Database is ready!"
+                echo "✅ Database ready!"
                 break
               fi
-              if [ \$i -eq \$timeout ]; then
+              counter=$((counter + 1))
+              if [ $counter -eq $timeout ]; then
                 echo "❌ Database timeout"
                 docker compose logs db
                 exit 1
               fi
-              echo "⏳ Waiting... (\$i/\$timeout)"
+              echo "⏳ Waiting... ($counter/$timeout)"
               sleep 1
             done
             
             # Ensure database exists
-            echo "🔧 Ensuring database exists..."
+            echo "🔧 Verifying database..."
             docker compose exec -T db psql -U labmyshare -lqt | grep labmyshare_db || {
-              echo "📦 Creating database labmyshare_db..."
+              echo "📦 Creating database..."
               docker compose exec -T db createdb -U labmyshare labmyshare_db
             }
             
@@ -561,33 +585,36 @@ jobs:
             docker compose up -d
             
             # Wait for web service
-            echo "⏳ Waiting for web service..."
-            sleep 45
+            echo "⏳ Waiting for web service to start..."
+            sleep 60
             
             # Run Django setup
-            echo "📊 Running Django migrations..."
-            docker compose exec -T web python manage.py migrate --noinput || echo "Migration warnings ignored"
+            echo "📊 Running migrations..."
+            docker compose exec -T web python manage.py migrate --noinput
             
             echo "📦 Collecting static files..."
-            docker compose exec -T web python manage.py collectstatic --noinput || echo "Static collection warnings ignored"
+            docker compose exec -T web python manage.py collectstatic --noinput
             
             echo "👤 Creating initial data..."
-            docker compose exec -T web python manage.py create_initial_data || echo "Initial data warnings ignored"
+            docker compose exec -T web python manage.py create_initial_data
             
             # Final restart
-            echo "🔄 Final restart..."
+            echo "🔄 Restarting services..."
             docker compose restart web nginx
             sleep 20
             
-            # Status check
+            # Show status
             echo "📊 Final status:"
             docker compose ps
             
             # Cleanup
-            docker image prune -af --filter "until=24h" || true
+            docker image prune -af --filter "until=24h"
             
-            echo "✅ Deployment completed successfully!"
-          DEPLOY_EOF
+            # Remove temp files
+            rm /tmp/docker-compose.fixed.yml /tmp/nginx.conf /tmp/http-only.conf /tmp/create_initial_data.py /tmp/production.env
+            
+            echo "✅ Deployment completed!"
+          DEPLOY_SCRIPT
 
       - name: Health Check
         run: |
@@ -605,6 +632,7 @@ jobs:
           done
           
           echo "❌ Health check failed"
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && docker compose ps && docker compose logs web --tail=20'
           exit 1
 
       - name: Deployment Summary
@@ -612,8 +640,8 @@ jobs:
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             echo "✅ Deployment successful!"
-            echo "🌐 Application URL: http://backend.beautyspabyshea.co.uk:8080"
-            echo "🔍 Health check: http://backend.beautyspabyshea.co.uk:8080/health/"
+            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8080"
+            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8080/health/"
             echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8080/swagger/"
           else
             echo "❌ Deployment failed"
