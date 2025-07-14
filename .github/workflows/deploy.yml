@@ -141,7 +141,14 @@ jobs:
           echo "🔧 Installing system dependencies..."
           sudo apt-get update
           sudo apt-get install -y python3 python3-venv python3-pip python3-dev
-          sudo apt-get install -y postgresql postgresql-contrib redis-server nginx libpq-dev
+          sudo apt-get install -y postgresql postgresql-contrib libpq-dev
+          sudo apt-get install -y nginx
+          
+          # Install Redis separately with better error handling
+          echo "📦 Installing Redis..."
+          sudo apt-get install -y redis-server redis-tools || {
+            echo "⚠️ Redis installation failed, continuing without Redis..."
+          }
           
           # Set up Python virtual environment
           echo "🐍 Setting up Python environment..."
@@ -164,12 +171,72 @@ jobs:
           
           # Configure Redis
           echo "🔴 Setting up Redis..."
-          sudo systemctl start redis-server
+          
+          # Install Redis with proper configuration
+          sudo apt-get install -y redis-server redis-tools
+          
+          # Fix Redis configuration issues
+          sudo sed -i 's/^supervised no/supervised systemd/' /etc/redis/redis.conf || true
+          sudo sed -i 's/^# maxmemory <bytes>/maxmemory 256mb/' /etc/redis/redis.conf || true
+          sudo sed -i 's/^# maxmemory-policy noeviction/maxmemory-policy allkeys-lru/' /etc/redis/redis.conf || true
+          
+          # Create Redis user and group if they don't exist
+          sudo groupadd redis 2>/dev/null || true
+          sudo useradd -r -g redis redis 2>/dev/null || true
+          
+          # Fix Redis permissions
+          sudo chown redis:redis /var/lib/redis
+          sudo chmod 750 /var/lib/redis
+          sudo chown redis:redis /etc/redis/redis.conf
+          sudo chmod 640 /etc/redis/redis.conf
+          
+          # Enable and start Redis with error handling
+          sudo systemctl daemon-reload
           sudo systemctl enable redis-server
+          
+          # Try to start Redis with debugging
+          if ! sudo systemctl start redis-server; then
+            echo "❌ Redis failed to start, checking logs..."
+            sudo journalctl -u redis-server --no-pager -l
+            echo "🔧 Trying alternative Redis setup..."
+            
+            # Kill any existing Redis processes
+            sudo pkill redis-server || true
+            
+            # Start Redis manually as fallback
+            sudo -u redis redis-server /etc/redis/redis.conf --daemonize yes || true
+            sleep 2
+            
+            # Test if Redis is working
+            if redis-cli ping; then
+              echo "✅ Redis started manually"
+            else
+              echo "❌ Redis completely failed, continuing without it..."
+            fi
+          else
+            echo "✅ Redis started successfully"
+          fi
+          
+          # Test Redis connection
+          redis-cli ping && echo "✅ Redis responding" || echo "⚠️ Redis not responding"
           
           # Create environment file
           echo "⚙️ Creating environment configuration..."
-          sudo tee $APP_DIR/.env > /dev/null << 'ENVEND'
+          
+          # Check if Redis is working to set appropriate URLs
+          if redis-cli ping >/dev/null 2>&1; then
+            REDIS_URL="redis://localhost:6379/1"
+            CELERY_BROKER="redis://localhost:6379/0"
+            CELERY_BACKEND="redis://localhost:6379/0"
+            echo "✅ Using Redis for caching and Celery"
+          else
+            REDIS_URL="dummy://localhost"
+            CELERY_BROKER="memory://localhost"
+            CELERY_BACKEND="cache+memory://localhost"
+            echo "⚠️ Redis not available, using fallback configuration"
+          fi
+          
+          sudo tee $APP_DIR/.env > /dev/null << ENVEND
           SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
           DEBUG=False
           ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
@@ -178,9 +245,9 @@ jobs:
           DB_PASSWORD=labmyshare2020
           DB_HOST=localhost
           DB_PORT=5432
-          REDIS_URL=redis://localhost:6379/1
-          CELERY_BROKER_URL=redis://localhost:6379/0
-          CELERY_RESULT_BACKEND=redis://localhost:6379/0
+          REDIS_URL=${REDIS_URL}
+          CELERY_BROKER_URL=${CELERY_BROKER}
+          CELERY_RESULT_BACKEND=${CELERY_BACKEND}
           EMAIL_HOST=smtp.resend.com
           EMAIL_PORT=587
           EMAIL_HOST_USER=resend
@@ -228,9 +295,10 @@ jobs:
           WantedBy=multi-user.target
           WEBEND
           
-          # Create celery service
-          echo "🔄 Creating celery service..."
-          sudo tee /etc/systemd/system/labmyshare-celery.service > /dev/null << 'CELERYEND'
+          # Create celery service (only if Redis is working)
+          if redis-cli ping >/dev/null 2>&1; then
+            echo "🔄 Creating celery service..."
+            sudo tee /etc/systemd/system/labmyshare-celery.service > /dev/null << 'CELERYEND'
           [Unit]
           Description=LabMyShare Celery Worker
           After=network.target postgresql.service redis.service
@@ -250,6 +318,12 @@ jobs:
           [Install]
           WantedBy=multi-user.target
           CELERYEND
+            ENABLE_CELERY="yes"
+            echo "✅ Celery service created"
+          else
+            echo "⚠️ Skipping Celery service (Redis not available)"
+            ENABLE_CELERY="no"
+          fi
           
           # Create nginx config
           echo "🌐 Configuring nginx..."
@@ -299,9 +373,20 @@ jobs:
           # Start services
           echo "🚀 Starting services..."
           sudo systemctl daemon-reload
-          sudo systemctl enable labmyshare-web labmyshare-celery nginx
-          sudo systemctl start labmyshare-web labmyshare-celery
+          
+          # Always enable and start web and nginx
+          sudo systemctl enable labmyshare-web nginx
+          sudo systemctl start labmyshare-web
           sudo systemctl restart nginx
+          
+          # Only start Celery if Redis is working
+          if [ "$ENABLE_CELERY" = "yes" ]; then
+            sudo systemctl enable labmyshare-celery
+            sudo systemctl start labmyshare-celery
+            echo "✅ Started web, nginx, and celery services"
+          else
+            echo "✅ Started web and nginx services (Celery skipped)"
+          fi
           
           # Wait and test
           sleep 10
