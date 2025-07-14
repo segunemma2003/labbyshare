@@ -91,18 +91,10 @@ jobs:
       - name: Create deployment script
         run: |
           cat > deploy.sh << 'EOF'
-          #!/bin/bash
-          ...
-          # In your nginx config:
-          sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << 'NGINXEND'
-          server {
-              listen 8090;
-              server_name backend.beautyspabyshea.co.uk localhost;
-              ...
-          NGINXEND
-          ...
-          EOF
-
+#!/bin/bash
+set -e
+# deployment script logic here...
+EOF
           chmod +x deploy.sh
 
       - name: Copy and run deployment script
