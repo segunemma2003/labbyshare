@@ -12,6 +12,7 @@ class RegionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Region
         fields = ['id', 'code', 'name', 'currency', 'currency_symbol', 'timezone']
+        ref_name = 'UserRegion'
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
