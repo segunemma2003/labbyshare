@@ -1,66 +1,60 @@
-version: '3.8'
+version: "3.9"
 
 services:
   db:
+    container_name: labmyshare_db
     image: postgres:15
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-labmyshare_db}
-      POSTGRES_USER: ${DB_USER:-labmyshare}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-labmyshare123}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      # Persistent database storage
       - postgres_data:/var/lib/postgresql/data/
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-      # Backup directory (optional)
       - ./backups/postgres:/backups
     ports:
-      - "5432:5432"
-    restart: unless-stopped
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-labmyshare}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - labmyshare_network
 
   redis:
+    container_name: labmyshare_redis
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      # Persistent Redis storage
       - redis_data:/data
-      # Redis configuration (optional)
-      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
     ports:
-      - "6379:6379"
-    restart: unless-stopped
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - labmyshare_network
 
   web:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    container_name: labmyshare_web
+    image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
+    restart: unless-stopped
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2"
+      sh -c "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120
+      "
     volumes:
-      # Application code (for development - remove in production)
-      - .:/app
-      # Persistent static files
       - static_volume:/app/staticfiles
-      # Persistent media files (user uploads)
       - media_volume:/app/media
-      # Persistent logs
       - logs_volume:/app/logs
-      # Certificate storage (if using Let's Encrypt)
-      - ssl_certs:/app/ssl
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     depends_on:
@@ -68,149 +62,134 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s
+    networks:
+      - labmyshare_network
 
   celery:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    container_name: labmyshare_celery
+    image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
+    restart: unless-stopped
     command: celery -A labmyshare worker --loglevel=info --concurrency=4
     volumes:
-      - .:/app
-      # Share media volume for file processing
       - media_volume:/app/media
-      # Share logs volume
       - logs_volume:/app/logs
     env_file:
       - .env
     depends_on:
       - db
       - redis
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "celery", "-A", "labmyshare", "inspect", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - labmyshare_network
 
   celery-beat:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    container_name: labmyshare_celery_beat
+    image: ghcr.io/${GITHUB_REPOSITORY:-beautyspabyshea/labmyshare}:latest
+    restart: unless-stopped
     command: celery -A labmyshare beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
-      - .:/app
-      # Share logs volume
       - logs_volume:/app/logs
     env_file:
       - .env
     depends_on:
       - db
       - redis
-    restart: unless-stopped
+    networks:
+      - labmyshare_network
 
   nginx:
+    container_name: labmyshare_nginx
     image: nginx:alpine
+    restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      # Nginx configuration
+      - ./docker/nginx/http-only.conf:/etc/nginx/conf.d/default.conf:ro
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # Persistent static and media files
       - static_volume:/var/www/static:ro
       - media_volume:/var/www/media:ro
-      # SSL certificates
-      - ssl_certs:/etc/nginx/ssl:ro
-      # Nginx logs
       - nginx_logs:/var/log/nginx
     depends_on:
       - web
-    restart: unless-stopped
+    networks:
+      - labmyshare_network
 
-  # Optional: Database backup service
   db-backup:
+    container_name: labmyshare_db_backup
     image: postgres:15
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-labmyshare_db}
-      POSTGRES_USER: ${DB_USER:-labmyshare}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-labmyshare123}
-      PGPASSWORD: ${DB_PASSWORD:-labmyshare123}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGPASSWORD: ${DB_PASSWORD}
     volumes:
       - ./backups/postgres:/backups
       - ./docker/scripts/backup.sh:/backup.sh
     command: >
-      sh -c "chmod +x /backup.sh && 
-             echo '0 2 * * * /backup.sh' | crontab - && 
-             crond -f"
+      sh -c "
+        chmod +x /backup.sh &&
+        echo '0 2 * * * /backup.sh' | crontab - &&
+        crond -f
+      "
     depends_on:
       - db
-    restart: unless-stopped
+    networks:
+      - labmyshare_network
 
-# Named volumes for persistent storage
 volumes:
-  # Database storage - persists across container rebuilds
   postgres_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/postgres
+      device: /var/www/labmyshare/storage/postgres
 
-  # Redis storage - persists cache and session data
   redis_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/redis
+      device: /var/www/labmyshare/storage/redis
 
-  # Static files - CSS, JS, admin files
   static_volume:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/static
+      device: /var/www/labmyshare/storage/static
 
-  # Media files - user uploads, profile pictures, etc.
   media_volume:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/media
+      device: /var/www/labmyshare/storage/media
 
-  # Application logs
   logs_volume:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/logs
+      device: /var/www/labmyshare/storage/logs
 
-  # SSL certificates
-  ssl_certs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/storage/ssl
-
-  # Nginx logs
   nginx_logs:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/storage/nginx-logs
+      device: /var/www/labmyshare/storage/nginx-logs
 
 networks:
-  default:
-    name: labmyshare_network
+  labmyshare_network:
+    driver: bridge
