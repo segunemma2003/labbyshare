@@ -91,10 +91,10 @@ jobs:
       - name: Create deployment script
         run: |
           cat > deploy.sh << 'EOF'
-#!/bin/bash
-set -e
-# deployment script logic here...
-EOF
+          #!/bin/bash
+          set -e
+          # deployment script logic here...
+          EOF
           chmod +x deploy.sh
 
       - name: Copy and run deployment script
