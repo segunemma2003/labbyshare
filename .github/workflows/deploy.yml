@@ -200,21 +200,21 @@ jobs:
           # Update Gunicorn to bind to localhost only (more secure behind Nginx)
           echo "🌐 Configuring Gunicorn..."
           cat > $APP_DIR/gunicorn.conf.py << GUNICORN_EOF
-bind = "127.0.0.1:8000"  # Localhost only, behind Nginx
-workers = 4
-worker_class = "sync"
-worker_connections = 1000
-max_requests = 1000
-max_requests_jitter = 100
-timeout = 30
-keepalive = 2
-user = "$USER"
-group = "$USER"
-tmp_upload_dir = None
-errorlog = "$APP_DIR/logs/gunicorn_error.log"
-accesslog = "$APP_DIR/logs/gunicorn_access.log"
-loglevel = "info"
-GUNICORN_EOF
+          bind = "127.0.0.1:8000"  # Localhost only, behind Nginx
+          workers = 4
+          worker_class = "sync"
+          worker_connections = 1000
+          max_requests = 1000
+          max_requests_jitter = 100
+          timeout = 30
+          keepalive = 2
+          user = "$USER"
+          group = "$USER"
+          tmp_upload_dir = None
+          errorlog = "$APP_DIR/logs/gunicorn_error.log"
+          accesslog = "$APP_DIR/logs/gunicorn_access.log"
+          loglevel = "info"
+          GUNICORN_EOF
 
           # Create logs directory
           mkdir -p $APP_DIR/logs
@@ -256,115 +256,115 @@ GUNICORN_EOF
           # Setup Nginx with HTTPS support (certificate should already exist)
           echo "🌐 Setting up Nginx with HTTPS support..."
           sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
-# HTTP server (redirect to HTTPS)
-server {
-    listen 80;
-    server_name backend.beautyspabyshea.co.uk;
-    return 301 https://\$server_name\$request_uri;
-}
-
-# HTTPS server
-server {
-    listen 443 ssl;
-    http2 on;
-    server_name backend.beautyspabyshea.co.uk;
-    
-    # SSL configuration (certificate should already exist)
-    ssl_certificate /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    # Security headers
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    
-    # Client upload size
-    client_max_body_size 50M;
-    
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
-    
-    # Main application - proxy to Gunicorn
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_redirect off;
-        
-        # Timeout settings
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-    
-    # Static files - served directly by Nginx (faster)
-    location /static/ {
-        alias /var/www/labmyshare/staticfiles/;
-        expires 30d;
-        add_header Cache-Control "public, no-transform";
-        add_header Vary "Accept-Encoding";
-        
-        # Serve pre-compressed files if available
-        location ~* \.(js|css)\$ {
-            gzip_static on;
-        }
-    }
-    
-    # Media files - served directly by Nginx
-    location /media/ {
-        alias /var/www/labmyshare/media/;
-        expires 7d;
-        add_header Cache-Control "public, no-transform";
-        
-        # Security for uploaded files
-        location ~* \.(php|phtml|pl|py|jsp|asp|sh|cgi)\$ {
-            deny all;
-        }
-    }
-    
-    # Health check - direct proxy
-    location /health/ {
-        proxy_pass http://127.0.0.1:8000;
-        access_log off;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # Robots.txt
-    location = /robots.txt {
-        add_header Content-Type text/plain;
-        return 200 "User-agent: *\nDisallow: /admin/\nDisallow: /api/\n";
-    }
-    
-    # Favicon
-    location = /favicon.ico {
-        log_not_found off;
-        access_log off;
-        return 204;
-    }
-    
-    # Deny access to sensitive files
-    location ~ /\. {
-        deny all;
-        access_log off;
-        log_not_found off;
-    }
-}
-NGINX_EOF
+          # HTTP server (redirect to HTTPS)
+          server {
+              listen 80;
+              server_name backend.beautyspabyshea.co.uk;
+              return 301 https://\$server_name\$request_uri;
+          }
+          
+          # HTTPS server
+          server {
+              listen 443 ssl;
+              http2 on;
+              server_name backend.beautyspabyshea.co.uk;
+              
+              # SSL configuration (certificate should already exist)
+              ssl_certificate /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
+              ssl_prefer_server_ciphers off;
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_timeout 10m;
+              
+              # Security headers
+              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header X-XSS-Protection "1; mode=block" always;
+              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+              
+              # Client upload size
+              client_max_body_size 50M;
+              
+              # Gzip compression
+              gzip on;
+              gzip_vary on;
+              gzip_min_length 1024;
+              gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+              
+              # Main application - proxy to Gunicorn
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_redirect off;
+                  
+                  # Timeout settings
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
+              }
+              
+              # Static files - served directly by Nginx (faster)
+              location /static/ {
+                  alias /var/www/labmyshare/staticfiles/;
+                  expires 30d;
+                  add_header Cache-Control "public, no-transform";
+                  add_header Vary "Accept-Encoding";
+                  
+                  # Serve pre-compressed files if available
+                  location ~* \.(js|css)\$ {
+                      gzip_static on;
+                  }
+              }
+              
+              # Media files - served directly by Nginx
+              location /media/ {
+                  alias /var/www/labmyshare/media/;
+                  expires 7d;
+                  add_header Cache-Control "public, no-transform";
+                  
+                  # Security for uploaded files
+                  location ~* \.(php|phtml|pl|py|jsp|asp|sh|cgi)\$ {
+                      deny all;
+                  }
+              }
+              
+              # Health check - direct proxy
+              location /health/ {
+                  proxy_pass http://127.0.0.1:8000;
+                  access_log off;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+              
+              # Robots.txt
+              location = /robots.txt {
+                  add_header Content-Type text/plain;
+                  return 200 "User-agent: *\nDisallow: /admin/\nDisallow: /api/\n";
+              }
+              
+              # Favicon
+              location = /favicon.ico {
+                  log_not_found off;
+                  access_log off;
+                  return 204;
+              }
+              
+              # Deny access to sensitive files
+              location ~ /\. {
+                  deny all;
+                  access_log off;
+                  log_not_found off;
+              }
+          }
+          NGINX_EOF
 
           # Remove default Nginx site and enable LabMyShare
           sudo rm -f /etc/nginx/sites-enabled/default
