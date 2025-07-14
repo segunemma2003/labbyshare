@@ -358,22 +358,23 @@ jobs:
             
             # Add static settings directly to the end of settings.py (override any existing)
             sudo -u $APP_USER tee -a $APP_DIR/labmyshare/settings.py << 'FALLBACKSTATIC'
-# Override static files settings for deployment
-import os
-from pathlib import Path
+            # Override static files settings for deployment
+            import os
+            from pathlib import Path
+            
+            # Force static files configuration
+            STATIC_ROOT = '/var/www/labmyshare/staticfiles'
+            STATIC_URL = '/static/'
+            MEDIA_ROOT = '/var/www/labmyshare/media'
+            MEDIA_URL = '/media/'
+            
+            # Ensure directories exist
+            os.makedirs(STATIC_ROOT, exist_ok=True)
+            os.makedirs(MEDIA_ROOT, exist_ok=True)
+            
+            print(f"🔧 STATIC_ROOT forced to: {STATIC_ROOT}")
+            FALLBACKSTATIC
 
-# Force static files configuration
-STATIC_ROOT = '/var/www/labmyshare/staticfiles'
-STATIC_URL = '/static/'
-MEDIA_ROOT = '/var/www/labmyshare/media'
-MEDIA_URL = '/media/'
-
-# Ensure directories exist
-os.makedirs(STATIC_ROOT, exist_ok=True)
-os.makedirs(MEDIA_ROOT, exist_ok=True)
-
-print(f"🔧 STATIC_ROOT forced to: {STATIC_ROOT}")
-FALLBACKSTATIC
             
             echo "✅ Added fallback static configuration to settings.py"
             
