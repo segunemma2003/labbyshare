@@ -390,36 +390,76 @@ jobs:
           # Create nginx site config
           cat > http-only.conf << 'EOF'
           upstream labmyshare {
-            server web:8000;
+            server web:8000 max_fails=3 fail_timeout=30s;
           }
+          
           server {
             listen 80;
             server_name backend.beautyspabyshea.co.uk localhost;
             
+            # Increase timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+            
+            # Main application
             location / {
               proxy_pass http://labmyshare;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
               proxy_set_header X-Forwarded-Proto $scheme;
-              proxy_connect_timeout 60s;
-              proxy_send_timeout 60s;
-              proxy_read_timeout 60s;
+              proxy_set_header Connection "";
+              proxy_http_version 1.1;
+              
+              # Add error handling
+              proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
             }
             
+            # Health check endpoint
             location /health/ {
               proxy_pass http://labmyshare;
+              proxy_set_header Host $host;
               access_log off;
+              
+              # Shorter timeouts for health checks
+              proxy_connect_timeout 10s;
+              proxy_send_timeout 10s;
+              proxy_read_timeout 10s;
             }
             
+            # Alternative health check without trailing slash
+            location /health {
+              proxy_pass http://labmyshare;
+              proxy_set_header Host $host;
+              access_log off;
+              
+              proxy_connect_timeout 10s;
+              proxy_send_timeout 10s;
+              proxy_read_timeout 10s;
+            }
+            
+            # Static files
             location /static/ {
               alias /var/www/static/;
               expires 30d;
+              add_header Cache-Control "public, immutable";
             }
             
+            # Media files
             location /media/ {
               alias /var/www/media/;
               expires 7d;
+              add_header Cache-Control "public";
+            }
+            
+            # Nginx status endpoint for debugging
+            location /nginx-status {
+              stub_status on;
+              access_log off;
+              allow 127.0.0.1;
+              allow 172.0.0.0/8;
+              deny all;
             }
           }
           EOF
@@ -544,11 +584,60 @@ jobs:
             sudo fuser -k 5432/tcp 2>/dev/null || true
             sudo fuser -k 6379/tcp 2>/dev/null || true
             
-            sleep 10
+            # Also check for any remaining Docker containers using these ports
+            echo "🔍 Checking for containers using ports..."
+            CONFLICTING_CONTAINERS=$(docker ps -a --filter "publish=8000" --filter "publish=8080" -q)
+            if [ ! -z "$CONFLICTING_CONTAINERS" ]; then
+              echo "🛑 Stopping conflicting containers..."
+              docker stop $CONFLICTING_CONTAINERS || true
+              docker rm $CONFLICTING_CONTAINERS || true
+            fi
+            
+            # Wait longer for ports to be freed
+            echo "⏳ Waiting for ports to be completely freed..."
+            sleep 15
+            
+            # Verify ports are free
+            echo "🔍 Verifying ports are free..."
+            if netstat -tulpn | grep -q ":8000 "; then
+              echo "❌ Port 8000 still in use:"
+              netstat -tulpn | grep ":8000 "
+              echo "🔧 Force killing processes on port 8000..."
+              sudo ss -lptn 'sport = :8000' | grep -o 'pid=[0-9]*' | cut -d= -f2 | xargs -r sudo kill -9
+              sleep 5
+            fi
+            
+            if netstat -tulpn | grep -q ":8080 "; then
+              echo "❌ Port 8080 still in use:"
+              netstat -tulpn | grep ":8080 "
+              echo "🔧 Force killing processes on port 8080..."
+              sudo ss -lptn 'sport = :8080' | grep -o 'pid=[0-9]*' | cut -d= -f2 | xargs -r sudo kill -9
+              sleep 5
+            fi
             
             # Pull images
             echo "📥 Pulling Docker images..."
-            docker compose pull
+            if ! docker compose pull; then
+              echo "❌ Failed to pull images"
+              echo "🔍 Checking available images..."
+              docker images | grep labmyshare || echo "No labmyshare images found"
+              echo "🔍 Checking registry connectivity..."
+              docker pull ghcr.io/${{ github.repository }}:latest || echo "Failed to pull latest image"
+              exit 1
+            fi
+            echo "✅ Images pulled successfully"
+            
+            # Verify the image exists locally
+            echo "🔍 Verifying Docker image..."
+            if docker images | grep -q "${{ github.repository }}"; then
+              echo "✅ Docker image found locally"
+              docker images | grep "${{ github.repository }}"
+            else
+              echo "❌ Docker image not found"
+              echo "Available images:"
+              docker images
+              exit 1
+            fi
             
             # Start database and redis first
             echo "🗄️ Starting core services..."
@@ -580,13 +669,106 @@ jobs:
               docker compose exec -T db createdb -U labmyshare labmyshare_db
             }
             
-            # Start all services
-            echo "🚀 Starting all services..."
+            # Start web container specifically
+            echo "🌐 Starting web container..."
+            docker compose up -d web
+            
+            # Wait for web container to be running
+            echo "⏳ Waiting for web container to start..."
+            timeout=120
+            counter=0
+            while [ $counter -lt $timeout ]; do
+              if docker compose ps web | grep -q "Up"; then
+                echo "✅ Web container is running!"
+                break
+              fi
+              counter=$((counter + 5))
+              if [ $counter -eq $timeout ]; then
+                echo "❌ Web container failed to start"
+                echo "=== Web Container Logs ==="
+                docker compose logs web
+                echo "=== Container Status ==="
+                docker compose ps
+                exit 1
+              fi
+              echo "⏳ Waiting for web container... ($counter/$timeout seconds)"
+              sleep 5
+            done
+            
+            # Wait for web service to be healthy
+            echo "🏥 Waiting for web service health check..."
+            timeout=180
+            counter=0
+            while [ $counter -lt $timeout ]; do
+              if docker compose exec -T web curl -f http://localhost:8000/health/ > /dev/null 2>&1; then
+                echo "✅ Web service is healthy!"
+                break
+              fi
+              counter=$((counter + 10))
+              if [ $counter -eq $timeout ]; then
+                echo "❌ Web service health check failed"
+                echo "=== Web Service Logs ==="
+                docker compose logs web --tail=50
+                echo "=== Testing manual health check ==="
+                docker compose exec -T web curl -v http://localhost:8000/health/ || echo "Manual health check failed"
+                exit 1
+              fi
+              echo "⏳ Waiting for web health... ($counter/$timeout seconds)"
+              sleep 10
+            done
+            
+            # Now start all remaining services
+            echo "🚀 Starting all remaining services..."
             docker compose up -d
             
-            # Wait for web service
-            echo "⏳ Waiting for web service to start..."
-            sleep 60
+            # Verify all services are running
+            echo "📊 Checking all services..."
+            sleep 30
+            
+            EXPECTED_SERVICES="db redis web celery celery-beat nginx db-backup"
+            for service in $EXPECTED_SERVICES; do
+              if docker compose ps $service | grep -q "Up"; then
+                echo "✅ $service is running"
+              else
+                echo "❌ $service is not running"
+                docker compose logs $service --tail=20
+                # Don't exit here, let's see which services are problematic
+              fi
+            done
+            
+            # Show final status
+            echo "📋 Final container status:"
+            docker compose ps
+            
+            # Check and configure firewall if needed
+            echo "🔥 Checking firewall configuration..."
+            if command -v ufw >/dev/null 2>&1; then
+              echo "📋 Current UFW status:"
+              sudo ufw status numbered || true
+              
+              # Allow port 8080 if not already allowed
+              if ! sudo ufw status | grep -q "8080"; then
+                echo "🔓 Opening port 8080..."
+                sudo ufw allow 8080/tcp || true
+              fi
+              
+              # Allow SSH if not already allowed
+              if ! sudo ufw status | grep -q "22/tcp"; then
+                echo "🔓 Ensuring SSH access..."
+                sudo ufw allow 22/tcp || true
+              fi
+            fi
+            
+            # Test external port binding
+            echo "🔌 Testing external port binding..."
+            if netstat -tulpn | grep -q ":8080.*LISTEN"; then
+              echo "✅ Port 8080 is listening"
+            else
+              echo "❌ Port 8080 is not listening"
+              netstat -tulpn | grep -E ":(8000|8080)"
+              docker compose ps
+              exit 1
+            fi
             
             # Run Django setup
             echo "📊 Running migrations..."
@@ -618,21 +800,54 @@ jobs:
 
       - name: Health Check
         run: |
-          echo "🔍 Running health checks..."
-          sleep 30
+          echo "🔍 Running comprehensive health checks..."
           
-          for i in {1..10}; do
-            echo "🔍 Health check attempt $i/10..."
-            if curl -f -m 10 http://backend.beautyspabyshea.co.uk:8080/health/; then
-              echo "✅ Health check passed!"
-              exit 0
+          # First, check if the server is reachable
+          echo "🌐 Testing server connectivity..."
+          if ! ping -c 1 ${{ secrets.SERVER_HOST }} > /dev/null 2>&1; then
+            echo "❌ Server is not reachable"
+            exit 1
+          fi
+          echo "✅ Server is reachable"
+          
+          # Check container status on server
+          echo "📊 Checking container status on server..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Container Status ===" && docker compose ps && echo "=== Port Check ===" && netstat -tulpn | grep -E ":(8000|8080|5432|6379)" && echo "=== Nginx Status ===" && docker compose logs nginx --tail=10 && echo "=== Web Status ===" && docker compose logs web --tail=20'
+          
+          # Test direct port 8080 connectivity
+          echo "🔌 Testing port 8080 connectivity..."
+          if nc -z ${{ secrets.SERVER_HOST }} 8080; then
+            echo "✅ Port 8080 is open"
+          else
+            echo "❌ Port 8080 is not accessible"
+            echo "🔍 Checking firewall and nginx configuration..."
+            ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== UFW Status ===" && sudo ufw status && echo "=== Nginx Config Test ===" && docker compose exec nginx nginx -t && echo "=== All Container Logs ===" && docker compose logs --tail=50'
+            exit 1
+          fi
+          
+          # Try health check with more details
+          echo "🏥 Attempting health check..."
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5..."
+            
+            # Try different endpoints
+            for endpoint in "/health/" "/health" "/"; do
+              echo "Testing endpoint: $endpoint"
+              if curl -v -f -m 15 "http://backend.beautyspabyshea.co.uk:8080$endpoint" 2>&1; then
+                echo "✅ Health check passed on $endpoint!"
+                exit 0
+              fi
+            done
+            
+            if [ $i -lt 5 ]; then
+              echo "⏳ Health check failed, waiting 20 seconds before retry..."
+              sleep 20
             fi
-            echo "⏳ Retrying in 15 seconds..."
-            sleep 15
           done
           
-          echo "❌ Health check failed"
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && docker compose ps && docker compose logs web --tail=20'
+          echo "❌ All health check attempts failed"
+          echo "🔍 Final diagnostics..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Final Container Status ===" && docker compose ps && echo "=== Web Container Logs ===" && docker compose logs web --tail=50 && echo "=== Nginx Container Logs ===" && docker compose logs nginx --tail=30'
           exit 1
 
       - name: Deployment Summary
