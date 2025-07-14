@@ -1,4 +1,4 @@
-name: Simple Deployment (No Docker)
+name: Deploy to Production Server
 
 on:
   push:
@@ -73,7 +73,7 @@ jobs:
 
     environment:
       name: production
-      url: http://backend.beautyspabyshea.co.uk:8100
+      url: http://backend.beautyspabyshea.co.uk:8000
 
     steps:
       - name: Checkout code
@@ -88,16 +88,185 @@ jobs:
         run: |
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Create deployment script
+      - name: Create comprehensive deployment script
         run: |
           cat > deploy.sh << 'EOF'
           #!/bin/bash
           set -e
-          # deployment script logic here...
+
+          echo "🚀 Starting LabMyShare Deployment..."
+
+          # Configuration
+          APP_DIR="/var/www/labmyshare"
+          REPO_URL="https://github.com/beautyspabyshea/labmyshare.git"
+          BRANCH="main"
+          BACKUP_DIR="/var/backups/labmyshare"
+          SERVICE_NAME="labmyshare-web"
+
+          # Create directories if they don't exist
+          sudo mkdir -p $APP_DIR
+          sudo mkdir -p $BACKUP_DIR
+          sudo mkdir -p /var/www/labmyshare/storage/{postgres,redis,static,media,logs,nginx-logs,nginx-cache}
+          sudo mkdir -p /var/www/labmyshare/backups/postgres
+
+          # Set proper ownership
+          sudo chown -R $USER:$USER $APP_DIR
+          sudo chown -R $USER:$USER $BACKUP_DIR
+
+          # Backup current deployment if it exists
+          if [ -d "$APP_DIR/.git" ]; then
+            echo "📦 Creating backup of current deployment..."
+            BACKUP_NAME="backup-$(date +%Y%m%d-%H%M%S)"
+            sudo cp -r $APP_DIR $BACKUP_DIR/$BACKUP_NAME
+            echo "✅ Backup created: $BACKUP_DIR/$BACKUP_NAME"
+          fi
+
+          # Clone or update repository
+          if [ ! -d "$APP_DIR/.git" ]; then
+            echo "📥 Cloning repository..."
+            git clone $REPO_URL $APP_DIR
+          else
+            echo "🔄 Updating repository..."
+            cd $APP_DIR
+            git fetch origin
+            git reset --hard origin/$BRANCH
+          fi
+
+          cd $APP_DIR
+
+          # Check if we're using Docker deployment
+          if [ -f "docker-compose.yml" ]; then
+            echo "🐳 Docker deployment detected"
+            
+            # Install Docker if not present
+            if ! command -v docker &> /dev/null; then
+              echo "📦 Installing Docker..."
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sudo sh get-docker.sh
+              sudo usermod -aG docker $USER
+            fi
+
+            # Install Docker Compose if not present
+            if ! command -v docker-compose &> /dev/null; then
+              echo "📦 Installing Docker Compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+
+            # Setup environment file
+            if [ ! -f ".env" ]; then
+              echo "⚙️ Setting up environment file..."
+              cp .env.production .env
+            fi
+
+            # Initialize storage directories
+            if [ -f "docker/scripts/init-storage.sh" ]; then
+              chmod +x docker/scripts/init-storage.sh
+              ./docker/scripts/init-storage.sh
+            fi
+
+            # Build and deploy with Docker
+            echo "🏗️ Building and starting containers..."
+            docker-compose down --remove-orphans || true
+            docker-compose pull
+            docker-compose up -d --build
+
+            # Wait for services to be ready
+            echo "⏳ Waiting for services to start..."
+            sleep 30
+
+            # Check container health
+            docker-compose ps
+
+          else
+            echo "🐍 Direct Python deployment detected"
+            
+            # Install system dependencies
+            sudo apt-get update
+            sudo apt-get install -y python3 python3-pip python3-venv postgresql-client redis-tools nginx
+
+            # Create virtual environment
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+            fi
+
+            # Activate virtual environment and install dependencies
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+
+            # Setup environment
+            if [ ! -f ".env" ]; then
+              cp .env.production .env
+            fi
+
+            # Run migrations and collect static files
+            python manage.py migrate --noinput
+            python manage.py collectstatic --noinput
+
+            # Setup systemd service
+            sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << SYSTEMD_EOF
+          [Unit]
+          Description=LabMyShare Django Application
+          After=network.target postgresql.service redis.service
+
+          [Service]
+          Type=exec
+          User=$USER
+          Group=$USER
+          WorkingDirectory=$APP_DIR
+          Environment=PATH=$APP_DIR/venv/bin
+          ExecStart=$APP_DIR/venv/bin/gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4
+          ExecReload=/bin/kill -s HUP \$MAINPID
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SYSTEMD_EOF
+
+            # Reload systemd and start service
+            sudo systemctl daemon-reload
+            sudo systemctl enable $SERVICE_NAME
+            sudo systemctl restart $SERVICE_NAME
+
+            # Setup Nginx proxy
+            sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
+          server {
+              listen 8000;
+              server_name backend.beautyspabyshea.co.uk;
+
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+
+              location /static/ {
+                  alias $APP_DIR/staticfiles/;
+                  expires 30d;
+              }
+
+              location /media/ {
+                  alias $APP_DIR/media/;
+                  expires 7d;
+              }
+          }
+          NGINX_EOF
+
+            # Enable Nginx site
+            sudo ln -sf /etc/nginx/sites-available/labmyshare /etc/nginx/sites-enabled/
+            sudo nginx -t && sudo systemctl reload nginx
+          fi
+
+          echo "✅ Deployment completed successfully!"
+          echo "🌐 Application should be available at: http://backend.beautyspabyshea.co.uk:8000"
           EOF
           chmod +x deploy.sh
 
-      - name: Copy and run deployment script
+      - name: Deploy to server
         run: |
           scp deploy.sh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "bash /tmp/deploy.sh"
@@ -105,18 +274,22 @@ jobs:
       - name: Health Check
         run: |
           echo "🔍 Health check..."
-          sleep 30
+          sleep 60  # Give more time for services to start
 
-          if nc -z ${{ secrets.SERVER_HOST }} 8100; then
-            echo "✅ Port 8100 accessible"
+          # Check if port 8000 is accessible (corrected from 8100)
+          if nc -z ${{ secrets.SERVER_HOST }} 8000; then
+            echo "✅ Port 8000 accessible"
           else
-            echo "❌ Port 8100 not accessible"
+            echo "❌ Port 8000 not accessible"
+            echo "🔍 Checking if Docker containers are running..."
+            ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "docker ps || systemctl status labmyshare-web || true"
             exit 1
           fi
 
-          for i in {1..5}; do
-            echo "Health check attempt $i/5..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8100/health/" 2>&1; then
+          # Health check attempts
+          for i in {1..10}; do
+            echo "Health check attempt $i/10..."
+            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8000/health/" 2>&1; then
               echo "✅ Health check passed!"
               exit 0
             fi
@@ -124,18 +297,24 @@ jobs:
           done
 
           echo "❌ Health checks failed"
+          echo "🔍 Checking container logs..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "docker-compose logs --tail=50 || journalctl -u labmyshare-web --no-pager -n 50 || true"
           exit 1
 
       - name: Deployment Summary
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Simple deployment successful!"
-            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8100"
-            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8100/health/"
-            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8100/swagger/"
-            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8100/admin/"
-            echo "📊 Status: sudo systemctl status labmyshare-web"
+            echo "✅ Deployment successful!"
+            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8000"
+            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8000/health/"
+            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8000/swagger/"
+            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8000/admin/"
+            echo "📊 Container status: docker ps"
           else
-            echo "❌ Simple deployment failed"
+            echo "❌ Deployment failed"
+            echo "🔍 Check logs with:"
+            echo "  - docker-compose logs"
+            echo "  - systemctl status labmyshare-web"
+            echo "  - journalctl -u labmyshare-web"
           fi
