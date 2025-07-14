@@ -38,6 +38,10 @@ class PaymentListView(generics.ListAPIView):
     ordering = ['-created_at']
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return Payment.objects.none()
+            
         return Payment.objects.filter(
             customer=self.request.user
         ).select_related('booking')
@@ -52,6 +56,10 @@ class PaymentDetailView(generics.RetrieveAPIView):
     lookup_field = 'payment_id'
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return Payment.objects.none()
+            
         return Payment.objects.filter(customer=self.request.user)
 
 
@@ -206,6 +214,10 @@ class SavedPaymentMethodsView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return SavedPaymentMethod.objects.none()
+            
         return SavedPaymentMethod.objects.filter(
             customer=self.request.user
         ).order_by('-is_default', '-created_at')
@@ -219,8 +231,11 @@ class PaymentMethodDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser - THIS WAS THE MAIN ISSUE
+        if getattr(self, 'swagger_fake_view', False):
+            return SavedPaymentMethod.objects.none()
+            
         return SavedPaymentMethod.objects.filter(customer=self.request.user)
-
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

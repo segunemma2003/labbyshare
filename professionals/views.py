@@ -156,7 +156,13 @@ class ProfessionalProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsVerifiedProfessional, IsOwnerOrReadOnly]
     
     def get_object(self):
-        return self.request.user.professional_profile
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return None
+            
+        if hasattr(self.request.user, 'professional_profile'):
+            return self.request.user.professional_profile
+        return None
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -172,6 +178,13 @@ class AvailabilityManagementView(generics.ListCreateAPIView):
     permission_classes = [IsVerifiedProfessional]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return ProfessionalAvailability.objects.none()
+            
+        if not hasattr(self.request.user, 'professional_profile'):
+            return ProfessionalAvailability.objects.none()
+            
         professional = self.request.user.professional_profile
         region = getattr(self.request, 'region', None)
         
@@ -179,10 +192,17 @@ class AvailabilityManagementView(generics.ListCreateAPIView):
             professional=professional,
             region=region
         ).order_by('weekday', 'start_time')
+        
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        context['professional'] = self.request.user.professional_profile
+        
+        # Handle schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return context
+            
+        if hasattr(self.request.user, 'professional_profile'):
+            context['professional'] = self.request.user.professional_profile
         context['region'] = getattr(self.request, 'region', None)
         return context
     
@@ -203,8 +223,16 @@ class AvailabilityUpdateView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsVerifiedProfessional]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return ProfessionalAvailability.objects.none()
+            
+        if not hasattr(self.request.user, 'professional_profile'):
+            return ProfessionalAvailability.objects.none()
+            
         professional = self.request.user.professional_profile
         return ProfessionalAvailability.objects.filter(professional=professional)
+
 
 
 class UnavailabilityView(generics.ListCreateAPIView):
@@ -215,6 +243,13 @@ class UnavailabilityView(generics.ListCreateAPIView):
     permission_classes = [IsVerifiedProfessional]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return ProfessionalUnavailability.objects.none()
+            
+        if not hasattr(self.request.user, 'professional_profile'):
+            return ProfessionalUnavailability.objects.none()
+            
         professional = self.request.user.professional_profile
         region = getattr(self.request, 'region', None)
         
@@ -226,7 +261,13 @@ class UnavailabilityView(generics.ListCreateAPIView):
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        context['professional'] = self.request.user.professional_profile
+        
+        # Handle schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return context
+            
+        if hasattr(self.request.user, 'professional_profile'):
+            context['professional'] = self.request.user.professional_profile
         context['region'] = getattr(self.request, 'region', None)
         return context
 
@@ -239,6 +280,10 @@ class DocumentUploadView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        # Handle schema generation with AnonymousUser
+        if getattr(self, 'swagger_fake_view', False):
+            return ProfessionalDocument.objects.none()
+            
         if hasattr(self.request.user, 'professional_profile'):
             return ProfessionalDocument.objects.filter(
                 professional=self.request.user.professional_profile
@@ -246,8 +291,13 @@ class DocumentUploadView(generics.ListCreateAPIView):
         return ProfessionalDocument.objects.none()
     
     def perform_create(self, serializer):
-        professional = self.request.user.professional_profile
-        serializer.save(professional=professional)
+        # Handle schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return
+            
+        if hasattr(self.request.user, 'professional_profile'):
+            professional = self.request.user.professional_profile
+            serializer.save(professional=professional)
 
 
 @api_view(['GET'])
