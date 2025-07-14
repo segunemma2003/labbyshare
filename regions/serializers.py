@@ -14,6 +14,7 @@ class RegionSerializer(serializers.ModelSerializer):
             'timezone', 'country_code', 'business_start_time', 
             'business_end_time', 'is_active'
         ]
+        ref_name = 'Region'
 
 
 class RegionalSettingsSerializer(serializers.ModelSerializer):
