@@ -1,5 +1,5 @@
 """
-Django settings for labmyshare project optimized for millions of users.
+Django settings for labmyshare project - Works for both local and production
 """
 import os
 from pathlib import Path
@@ -14,7 +14,32 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-kbe964))52lspgz7g4jf9
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']  # Configure properly for production
+# Environment detection
+IS_PRODUCTION = not DEBUG or os.environ.get('ENVIRONMENT') == 'production'
+IS_LOCAL = not IS_PRODUCTION
+
+# Flexible host configuration
+ALLOWED_HOSTS = []
+if IS_PRODUCTION:
+    ALLOWED_HOSTS = [
+        'backend.beautyspabyshea.co.uk',
+        'localhost',
+        '127.0.0.1',
+        '31.97.57.199',  # Your server IP
+    ]
+else:
+    # Local development
+    ALLOWED_HOSTS = [
+        'localhost',
+        '127.0.0.1',
+        '0.0.0.0',
+        '*',  # Allow all hosts in development
+    ]
+
+# Add any additional hosts from environment
+ADDITIONAL_HOSTS = os.environ.get('ADDITIONAL_HOSTS', '').split(',')
+ALLOWED_HOSTS.extend([host.strip() for host in ADDITIONAL_HOSTS if host.strip()])
+
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
 
@@ -30,10 +55,10 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = [
     'rest_framework',
-    'rest_framework.authtoken',  # Token authentication
+    'rest_framework.authtoken',
     'corsheaders',
     'django_filters',
-    'drf_yasg',  # Swagger
+    'drf_yasg',
     'django_redis',
     'django_celery_beat',
     'django_extensions',
@@ -57,14 +82,14 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Static files in production
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'regions.middleware.RegionMiddleware',  # Custom middleware for region handling
+    'regions.middleware.RegionMiddleware',
 ]
 
 ROOT_URLCONF = 'labmyshare.urls'
@@ -87,7 +112,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'labmyshare.wsgi.application'
 
-# Database optimized for high traffic
+# Database configuration - flexible for local and production
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -96,10 +121,17 @@ DATABASES = {
         'PASSWORD': os.environ.get('DB_PASSWORD', 'labmyshare2020'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
-        'CONN_MAX_AGE': 600,  # Connection pooling
+        'CONN_MAX_AGE': 600,
         'CONN_HEALTH_CHECKS': True,
     }
 }
+
+# Use SQLite for local development if PostgreSQL is not available
+if IS_LOCAL and os.environ.get('USE_SQLITE', 'False').lower() == 'true':
+    DATABASES['default'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
@@ -127,12 +159,10 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files configuration - FIXED
+# Static files configuration - works for both local and production
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'  # This was missing!
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
-
-# Static files storage
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files
@@ -142,15 +172,17 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Redis Configuration for high performance caching
+# Redis Configuration - flexible for local and production
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1')
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        'LOCATION': REDIS_URL,
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'CONNECTION_POOL_KWARGS': {
-                'max_connections': 200,
+                'max_connections': 50 if IS_LOCAL else 200,
                 'retry_on_timeout': True,
                 'health_check_interval': 60,
             },
@@ -158,22 +190,18 @@ CACHES = {
             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
         },
         'KEY_PREFIX': 'labmyshare',
-        'TIMEOUT': 3600,  # 1 hour default
-    },
-    'sessions': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/2'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        }
+        'TIMEOUT': 3600,
     }
 }
 
-# Use Redis for sessions
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'sessions'
+# Use Redis for sessions in production, database for local
+if IS_PRODUCTION:
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+    SESSION_CACHE_ALIAS = 'default'
+else:
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
-# Celery Configuration for background tasks
+# Celery Configuration
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
@@ -210,7 +238,7 @@ REST_FRAMEWORK = {
     },
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
-    ] if not DEBUG else [
+    ] if IS_PRODUCTION else [
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
@@ -229,22 +257,65 @@ SWAGGER_SETTINGS = {
     'USE_SESSION_AUTH': False,
     'JSON_EDITOR': True,
     'SUPPORTED_SUBMIT_METHODS': [
-        'get',
-        'post',
-        'put',
-        'delete',
-        'patch'
+        'get', 'post', 'put', 'delete', 'patch'
     ],
 }
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://app.labmyshare.com",  # Add your frontend URLs
-]
+# CORS Configuration - flexible for local and production
+if IS_LOCAL:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_CREDENTIALS = True
+else:
+    CORS_ALLOWED_ORIGINS = [
+        "https://backend.beautyspabyshea.co.uk",
+        "http://backend.beautyspabyshea.co.uk",
+        "https://app.labmyshare.com",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOW_CREDENTIALS = True
+# HTTPS/SSL Configuration - Only in production
+if IS_PRODUCTION:
+    # Trust proxy headers for HTTPS
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    
+    # CSRF trusted origins for HTTPS
+    CSRF_TRUSTED_ORIGINS = [
+        'https://backend.beautyspabyshea.co.uk',
+        'http://backend.beautyspabyshea.co.uk',  # For fallback
+    ]
+    
+    # SSL/HTTPS settings - only enforce in production with proper SSL
+    USE_TLS = os.environ.get('USE_TLS', 'true').lower() == 'true'
+    
+    if USE_TLS:
+        SECURE_SSL_REDIRECT = False  # Let Nginx handle redirects
+        SESSION_COOKIE_SECURE = True
+        CSRF_COOKIE_SECURE = True
+        SECURE_BROWSER_XSS_FILTER = True
+        SECURE_CONTENT_TYPE_NOSNIFF = True
+        SECURE_HSTS_SECONDS = 31536000
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+        SECURE_HSTS_PRELOAD = True
+    else:
+        # Fallback for production without SSL
+        SESSION_COOKIE_SECURE = False
+        CSRF_COOKIE_SECURE = False
+else:
+    # Local development - no HTTPS enforcement
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]
+
+# Always set these for security
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
 
 # Firebase Configuration
 FIREBASE_CONFIG = {
@@ -277,7 +348,7 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
 
-# Logging Configuration
+# Logging Configuration - Different for local and production
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -291,14 +362,9 @@ LOGGING = {
             'style': '{',
         },
     },
-    'filters': {
-        'require_debug_true': {
-            '()': 'django.utils.log.RequireDebugTrue',
-        },
-    },
     'handlers': {
         'console': {
-            'level': 'INFO',
+            'level': 'DEBUG' if IS_LOCAL else 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'simple'
         },
@@ -309,12 +375,12 @@ LOGGING = {
     'loggers': {
         'django': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'DEBUG' if IS_LOCAL else 'INFO',
             'propagate': False,
         },
         'django.db.backends': {
             'handlers': ['console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
+            'level': 'DEBUG' if IS_LOCAL else 'INFO',
             'propagate': False,
         },
         'accounts': {
@@ -335,8 +401,8 @@ LOGGING = {
     },
 }
 
-# Add file logging only in production (when not in CI)
-if not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
+# Add file logging only in production
+if IS_PRODUCTION and not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
     LOGGING['handlers'].update({
         'file': {
             'level': 'INFO',
@@ -360,28 +426,12 @@ if not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
     for logger_name in ['django', 'accounts', 'payments', 'notifications']:
         LOGGING['loggers'][logger_name]['handlers'] = ['console', 'file', 'error_file']
 
-
 # Performance Settings
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 
-# Security Settings for Production
-if not DEBUG:
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_REDIRECT_EXEMPT = []
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    
-    # Security headers
-    SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
-    SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
-
-# Cache Keys
+# Cache Keys and Timeouts
 CACHE_KEYS = {
     'REGIONS': 'regions:all',
     'CATEGORIES': 'categories:region:{}',
@@ -391,12 +441,22 @@ CACHE_KEYS = {
     'AVAILABILITY': 'availability:professional:{}:region:{}:date:{}',
 }
 
-# Cache Timeouts (in seconds)
 CACHE_TIMEOUTS = {
     'REGIONS': 3600 * 24,  # 24 hours
-    'CATEGORIES': 3600 * 12,  # 12 hours
+    'CATEGORIES': 3600 * 12,  # 12 hours  
     'SERVICES': 3600 * 6,  # 6 hours
     'PROFESSIONALS': 3600 * 2,  # 2 hours
     'USER_PROFILE': 3600,  # 1 hour
     'AVAILABILITY': 1800,  # 30 minutes
 }
+
+# Print configuration info
+if DEBUG:
+    print(f"🔧 Django Configuration:")
+    print(f"   Environment: {'Production' if IS_PRODUCTION else 'Local Development'}")
+    print(f"   Debug: {DEBUG}")
+    print(f"   Database: {DATABASES['default']['ENGINE'].split('.')[-1]}")
+    print(f"   Allowed Hosts: {ALLOWED_HOSTS}")
+    print(f"   HTTPS: {'Enabled' if IS_PRODUCTION and globals().get('USE_TLS', False) else 'Disabled'}")
+    print(f"   Redis: {REDIS_URL}")
+    print(f"   Static Root: {STATIC_ROOT}")
