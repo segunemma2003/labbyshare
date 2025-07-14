@@ -170,24 +170,24 @@ jobs:
             sudo systemctl enable postgresql
             
             # Create database and user (ignore errors if already exists)
-            sudo -u postgres psql << 'EOF'
-            DO \$\$
-            BEGIN
-                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'labmyshare') THEN
-                    CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';
-                END IF;
-                
-                IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'labmyshare_db') THEN
-                    CREATE DATABASE labmyshare_db OWNER labmyshare;
-                END IF;
-                
-                ALTER ROLE labmyshare SET client_encoding TO 'utf8';
-                ALTER ROLE labmyshare SET default_transaction_isolation TO 'read committed';
-                ALTER ROLE labmyshare SET timezone TO 'UTC';
-                GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;
-            END
-            \$\$;
-            EOF
+            sudo -u postgres psql << 'POSTGRES_SQL'
+DO $
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'labmyshare') THEN
+        CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';
+    END IF;
+    
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'labmyshare_db') THEN
+        CREATE DATABASE labmyshare_db OWNER labmyshare;
+    END IF;
+    
+    ALTER ROLE labmyshare SET client_encoding TO 'utf8';
+    ALTER ROLE labmyshare SET default_transaction_isolation TO 'read committed';
+    ALTER ROLE labmyshare SET timezone TO 'UTC';
+    GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;
+END
+$;
+POSTGRES_SQL
             
             # Configure Redis
             echo "🔴 Setting up Redis..."
@@ -196,27 +196,30 @@ jobs:
             
             # Create environment file
             echo "⚙️ Creating environment configuration..."
-            sudo tee $APP_DIR/.env > /dev/null << 'ENV_FILE'
-          SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
-          DEBUG=False
-          ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
-          
-          DB_NAME=labmyshare_db
-          DB_USER=labmyshare
-          DB_PASSWORD=labmyshare2020
-          DB_HOST=localhost
-          DB_PORT=5432
-          
-          REDIS_URL=redis://localhost:6379/1
-          CELERY_BROKER_URL=redis://localhost:6379/0
-          CELERY_RESULT_BACKEND=redis://localhost:6379/0
-          
-          EMAIL_HOST=smtp.resend.com
-          EMAIL_PORT=587
-          EMAIL_HOST_USER=resend
-          EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
-          DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
-          ENV_FILE
+            cat > $APP_DIR/.env << 'ENVFILE'
+SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
+DEBUG=False
+ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
+
+DB_NAME=labmyshare_db
+DB_USER=labmyshare
+DB_PASSWORD=labmyshare2020
+DB_HOST=localhost
+DB_PORT=5432
+
+REDIS_URL=redis://localhost:6379/1
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+EMAIL_HOST=smtp.resend.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=resend
+EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
+DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
+ENVFILE
+            
+            # Set proper ownership
+            sudo chown $APP_USER:$APP_USER $APP_DIR/.env
             
             # Create directories and fix all permissions
             echo "📁 Creating directories and fixing permissions..."
@@ -232,143 +235,132 @@ jobs:
             sudo -u $APP_USER $PYTHON_PATH manage.py collectstatic --noinput
             
             # Create superuser
-            sudo -u $APP_USER $PYTHON_PATH manage.py shell << 'PYTHON_SCRIPT'
-          from django.contrib.auth import get_user_model
-          User = get_user_model()
-          if not User.objects.filter(email='admin@labmyshare.com').exists():
-              User.objects.create_superuser('admin', 'admin@labmyshare.com', 'admin123')
-              print("Superuser created")
-          else:
-              print("Superuser already exists")
-          PYTHON_SCRIPT
+            echo "👤 Creating superuser..."
+            sudo -u $APP_USER $PYTHON_PATH manage.py shell << 'PYTHONEOF'
+from django.contrib.auth import get_user_model
+User = get_user_model()
+if not User.objects.filter(email='admin@labmyshare.com').exists():
+    User.objects.create_superuser('admin', 'admin@labmyshare.com', 'admin123')
+    print("Superuser created")
+else:
+    print("Superuser already exists")
+PYTHONEOF
             
             # Create systemd service for web
             echo "🌐 Creating web service..."
-            sudo tee /etc/systemd/system/labmyshare-web.service > /dev/null << 'WEB_SERVICE'
-          [Unit]
-          Description=LabMyShare Web Service
-          After=network.target postgresql.service redis.service
-          Wants=postgresql.service redis.service
-          
-          [Service]
-          Type=notify
-          User=labmyshare
-          Group=labmyshare
-          WorkingDirectory=/var/www/labmyshare
-          Environment=PATH=/var/www/labmyshare/venv/bin
-          EnvironmentFile=/var/www/labmyshare/.env
-          ExecStart=/var/www/labmyshare/venv/bin/gunicorn labmyshare.wsgi:application \
-            --bind 127.0.0.1:8001 \
-            --workers 4 \
-            --threads 2 \
-            --timeout 120 \
-            --max-requests 1000 \
-            --max-requests-jitter 100 \
-            --access-logfile /var/www/labmyshare/logs/access.log \
-            --error-logfile /var/www/labmyshare/logs/error.log \
-            --log-level info
-          ExecReload=/bin/kill -s HUP $MAINPID
-          Restart=always
-          RestartSec=3
-          
-          [Install]
-          WantedBy=multi-user.target
-          WEB_SERVICE
+            cat > /tmp/labmyshare-web.service << 'WEBSERVICE'
+[Unit]
+Description=LabMyShare Web Service
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=notify
+User=labmyshare
+Group=labmyshare
+WorkingDirectory=/var/www/labmyshare
+Environment=PATH=/var/www/labmyshare/venv/bin
+EnvironmentFile=/var/www/labmyshare/.env
+ExecStart=/var/www/labmyshare/venv/bin/gunicorn labmyshare.wsgi:application --bind 127.0.0.1:8001 --workers 4 --threads 2 --timeout 120 --max-requests 1000 --max-requests-jitter 100 --access-logfile /var/www/labmyshare/logs/access.log --error-logfile /var/www/labmyshare/logs/error.log --log-level info
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+WEBSERVICE
+            sudo mv /tmp/labmyshare-web.service /etc/systemd/system/
             
             # Create systemd service for celery
             echo "🔄 Creating celery service..."
-            sudo tee /etc/systemd/system/labmyshare-celery.service > /dev/null << 'CELERY_SERVICE'
-          [Unit]
-          Description=LabMyShare Celery Worker
-          After=network.target postgresql.service redis.service
-          Wants=postgresql.service redis.service
-          
-          [Service]
-          Type=forking
-          User=labmyshare
-          Group=labmyshare
-          WorkingDirectory=/var/www/labmyshare
-          Environment=PATH=/var/www/labmyshare/venv/bin
-          EnvironmentFile=/var/www/labmyshare/.env
-          ExecStart=/var/www/labmyshare/venv/bin/celery -A labmyshare worker \
-            --loglevel=info \
-            --concurrency=4 \
-            --logfile=/var/www/labmyshare/logs/celery.log \
-            --detach
-          ExecStop=/var/www/labmyshare/venv/bin/celery -A labmyshare control shutdown
-          ExecReload=/var/www/labmyshare/venv/bin/celery -A labmyshare control restart
-          Restart=always
-          RestartSec=3
-          
-          [Install]
-          WantedBy=multi-user.target
-          CELERY_SERVICE
+            cat > /tmp/labmyshare-celery.service << 'CELERYSERVICE'
+[Unit]
+Description=LabMyShare Celery Worker
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=forking
+User=labmyshare
+Group=labmyshare
+WorkingDirectory=/var/www/labmyshare
+Environment=PATH=/var/www/labmyshare/venv/bin
+EnvironmentFile=/var/www/labmyshare/.env
+ExecStart=/var/www/labmyshare/venv/bin/celery -A labmyshare worker --loglevel=info --concurrency=4 --logfile=/var/www/labmyshare/logs/celery.log --detach
+ExecStop=/var/www/labmyshare/venv/bin/celery -A labmyshare control shutdown
+ExecReload=/var/www/labmyshare/venv/bin/celery -A labmyshare control restart
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+CELERYSERVICE
+            sudo mv /tmp/labmyshare-celery.service /etc/systemd/system/
             
             # Create systemd service for celery beat
             echo "⏰ Creating celery beat service..."
-            sudo tee /etc/systemd/system/labmyshare-celery-beat.service > /dev/null << 'BEAT_SERVICE'
-          [Unit]
-          Description=LabMyShare Celery Beat
-          After=network.target postgresql.service redis.service
-          Wants=postgresql.service redis.service
-          
-          [Service]
-          Type=simple
-          User=labmyshare
-          Group=labmyshare
-          WorkingDirectory=/var/www/labmyshare
-          Environment=PATH=/var/www/labmyshare/venv/bin
-          EnvironmentFile=/var/www/labmyshare/.env
-          ExecStart=/var/www/labmyshare/venv/bin/celery -A labmyshare beat \
-            --loglevel=info \
-            --logfile=/var/www/labmyshare/logs/celery-beat.log \
-            --scheduler django_celery_beat.schedulers:DatabaseScheduler
-          Restart=always
-          RestartSec=3
-          
-          [Install]
-          WantedBy=multi-user.target
-          BEAT_SERVICE
+            cat > /tmp/labmyshare-celery-beat.service << 'BEATSERVICE'
+[Unit]
+Description=LabMyShare Celery Beat
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=labmyshare
+Group=labmyshare
+WorkingDirectory=/var/www/labmyshare
+Environment=PATH=/var/www/labmyshare/venv/bin
+EnvironmentFile=/var/www/labmyshare/.env
+ExecStart=/var/www/labmyshare/venv/bin/celery -A labmyshare beat --loglevel=info --logfile=/var/www/labmyshare/logs/celery-beat.log --scheduler django_celery_beat.schedulers:DatabaseScheduler
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+BEATSERVICE
+            sudo mv /tmp/labmyshare-celery-beat.service /etc/systemd/system/
             
             # Configure nginx
             echo "🌐 Configuring nginx..."
-            sudo tee /etc/nginx/sites-available/labmyshare << 'NGINX_CONFIG'
-          server {
-              listen 8080;
-              server_name backend.beautyspabyshea.co.uk localhost;
-              
-              # Security headers
-              add_header X-Frame-Options "SAMEORIGIN" always;
-              add_header X-Content-Type-Options "nosniff" always;
-              add_header X-XSS-Protection "1; mode=block" always;
-              
-              # Main application
-              location / {
-                  proxy_pass http://127.0.0.1:8001;
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
-                  proxy_connect_timeout 60s;
-                  proxy_send_timeout 60s;
-                  proxy_read_timeout 60s;
-              }
-              
-              # Static files
-              location /static/ {
-                  alias /var/www/labmyshare/static/;
-                  expires 30d;
-                  add_header Cache-Control "public, immutable";
-              }
-              
-              # Media files
-              location /media/ {
-                  alias /var/www/labmyshare/media/;
-                  expires 7d;
-                  add_header Cache-Control "public";
-              }
-          }
-          NGINX_CONFIG
+            cat > /tmp/labmyshare-nginx << 'NGINXCONFIG'
+server {
+    listen 8080;
+    server_name backend.beautyspabyshea.co.uk localhost;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Main application
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # Static files
+    location /static/ {
+        alias /var/www/labmyshare/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Media files
+    location /media/ {
+        alias /var/www/labmyshare/media/;
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+}
+NGINXCONFIG
+            sudo mv /tmp/labmyshare-nginx /etc/nginx/sites-available/labmyshare
             
             # Enable nginx site
             sudo ln -sf /etc/nginx/sites-available/labmyshare /etc/nginx/sites-enabled/
