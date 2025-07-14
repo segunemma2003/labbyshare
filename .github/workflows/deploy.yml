@@ -314,10 +314,18 @@ jobs:
             chmod +x docker/scripts/init-storage.sh
             ./docker/scripts/init-storage.sh
             
-            # Complete cleanup
-            docker compose down -v --remove-orphans
+            # Complete cleanup - force stop everything using those ports
+            docker compose down -v --remove-orphans || true
+            docker stop $(docker ps -q) 2>/dev/null || true
             docker container prune -f
             docker image prune -f
+            
+            # Kill any processes using ports 8000 and 8080
+            sudo fuser -k 8000/tcp 2>/dev/null || true
+            sudo fuser -k 8080/tcp 2>/dev/null || true
+            
+            # Wait a moment for cleanup
+            sleep 10
             
             # Pull and start
             docker compose pull
