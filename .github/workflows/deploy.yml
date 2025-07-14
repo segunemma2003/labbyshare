@@ -257,14 +257,14 @@ jobs:
                   echo 'Database ready!' &&
                   python manage.py migrate --noinput &&
                   python manage.py collectstatic --noinput &&
-                  gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120
+                  gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8001 --workers 4 --threads 2 --timeout 120
                 "
               volumes:
                 - static_volume:/app/staticfiles
                 - media_volume:/app/media
                 - logs_volume:/app/logs
               ports:
-                - "127.0.0.1:8000:8000"
+                - "127.0.0.1:8001:8001"
               env_file:
                 - .env
               depends_on:
@@ -273,7 +273,7 @@ jobs:
                 redis:
                   condition: service_healthy
               healthcheck:
-                test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+                test: ["CMD", "curl", "-f", "http://localhost:8001/health/"]
                 interval: 30s
                 timeout: 10s
                 retries: 5
@@ -418,7 +418,7 @@ jobs:
             
             cat > docker/nginx/http-only.conf << 'NGINX_SITE'
           upstream labmyshare {
-            server web:8000 max_fails=3 fail_timeout=30s;
+            server web:8001 max_fails=3 fail_timeout=30s;
           }
           
           server {
@@ -689,7 +689,7 @@ jobs:
           
           # Get detailed status from server
           echo "📊 Getting detailed server status..."
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Container Status ===" && docker compose ps && echo "=== Port Status ===" && netstat -tulpn | grep -E ":(8000|8080)" && echo "=== Nginx Status ===" && docker compose logs nginx --tail=10'
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && echo "=== Container Status ===" && docker compose ps && echo "=== Port Status ===" && netstat -tulpn | grep -E ":(8001|8080)" && echo "=== Nginx Status ===" && docker compose logs nginx --tail=10'
           
           # Test port accessibility with timeout
           echo "🔌 Testing port 8080 accessibility..."
