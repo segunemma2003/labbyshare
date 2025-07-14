@@ -73,7 +73,7 @@ jobs:
 
     environment:
       name: production
-      url: http://backend.beautyspabyshea.co.uk:8000
+      url: http://backend.beautyspabyshea.co.uk
 
     steps:
       - name: Checkout code
@@ -197,10 +197,9 @@ jobs:
               print('Superuser already exists')
           PYTHON_EOF
 
-          # Create Gunicorn configuration
-          echo "🌐 Setting up Gunicorn..."
+          # Update Gunicorn to bind to localhost only (more secure behind Nginx)
           cat > $APP_DIR/gunicorn.conf.py << GUNICORN_EOF
-          bind = "0.0.0.0:8000"
+          bind = "127.0.0.1:8000"  # Localhost only, behind Nginx
           workers = 4
           worker_class = "sync"
           worker_connections = 1000
@@ -253,15 +252,29 @@ jobs:
           environment=PATH="$VENV_DIR/bin"
           SUPERVISOR_EOF
 
-          # Setup Nginx
-          echo "🌐 Setting up Nginx..."
+          # Setup Nginx as proper reverse proxy
+          echo "🌐 Setting up Nginx reverse proxy..."
           sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
           server {
-              listen 8000;
+              listen 80;
               server_name backend.beautyspabyshea.co.uk;
-
+              
+              # Security headers
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-Content-Type-Options "nosniff" always;
+              add_header X-XSS-Protection "1; mode=block" always;
+              add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+              
+              # Client upload size
               client_max_body_size 50M;
-
+              
+              # Gzip compression
+              gzip on;
+              gzip_vary on;
+              gzip_min_length 1024;
+              gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+              
+              # Main application - proxy to Gunicorn
               location / {
                   proxy_pass http://127.0.0.1:8000;
                   proxy_set_header Host \$host;
@@ -269,29 +282,78 @@ jobs:
                   proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
                   proxy_set_header X-Forwarded-Proto \$scheme;
                   proxy_redirect off;
+                  
+                  # Timeout settings
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
               }
-
+              
+              # Static files - served directly by Nginx (faster)
               location /static/ {
                   alias $APP_DIR/staticfiles/;
                   expires 30d;
                   add_header Cache-Control "public, no-transform";
+                  add_header Vary "Accept-Encoding";
+                  
+                  # Serve pre-compressed files if available
+                  location ~* \.(js|css)$ {
+                      gzip_static on;
+                  }
               }
-
+              
+              # Media files - served directly by Nginx
               location /media/ {
                   alias $APP_DIR/media/;
                   expires 7d;
                   add_header Cache-Control "public, no-transform";
+                  
+                  # Security for uploaded files
+                  location ~* \.(php|phtml|pl|py|jsp|asp|sh|cgi)$ {
+                      deny all;
+                  }
               }
-
+              
+              # Health check - direct proxy
               location /health/ {
                   proxy_pass http://127.0.0.1:8000;
                   access_log off;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+              
+              # Robots.txt
+              location = /robots.txt {
+                  add_header Content-Type text/plain;
+                  return 200 "User-agent: *\nDisallow: /admin/\nDisallow: /api/\n";
+              }
+              
+              # Favicon
+              location = /favicon.ico {
+                  log_not_found off;
+                  access_log off;
+                  return 204;
+              }
+              
+              # Deny access to sensitive files
+              location ~ /\. {
+                  deny all;
+                  access_log off;
+                  log_not_found off;
               }
           }
           NGINX_EOF
 
-          # Actually, let's run Django directly on port 8000 without Nginx proxy
-          # Remove Nginx configuration and run Gunicorn directly on port 8000
+          # Remove default Nginx site and enable LabMyShare
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo ln -sf /etc/nginx/sites-available/labmyshare /etc/nginx/sites-enabled/
+
+          # Test and restart Nginx
+          sudo nginx -t
+          sudo systemctl enable nginx
+          sudo systemctl restart nginx
           
           # Update Supervisor and restart services
           sudo supervisorctl reread
@@ -303,10 +365,11 @@ jobs:
           sudo supervisorctl status
 
           echo "✅ Deployment completed successfully!"
-          echo "🌐 Application should be available at: http://backend.beautyspabyshea.co.uk:8000"
-          echo "🔍 Health check: http://backend.beautyspabyshea.co.uk:8000/health/"
-          echo "👨‍💼 Admin panel: http://backend.beautyspabyshea.co.uk:8000/admin/"
-          echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8000/swagger/"
+          echo "🌐 Application available at: http://backend.beautyspabyshea.co.uk (no port needed!)"
+          echo "🔍 Health check: http://backend.beautyspabyshea.co.uk/health/"
+          echo "👨‍💼 Admin panel: http://backend.beautyspabyshea.co.uk/admin/"
+          echo "📚 API docs: http://backend.beautyspabyshea.co.uk/swagger/"
+          echo "🔒 To enable HTTPS: sudo certbot --nginx -d backend.beautyspabyshea.co.uk"
           
           EOF
           chmod +x deploy.sh
@@ -321,21 +384,21 @@ jobs:
           echo "🔍 Health check..."
           sleep 60  # Give time for services to start
 
-          # Check if port 8000 is accessible
+          # Check if port 80 is accessible (standard web port)
           for i in {1..5}; do
-            if nc -z ${{ secrets.SERVER_HOST }} 8000; then
-              echo "✅ Port 8000 accessible"
+            if nc -z ${{ secrets.SERVER_HOST }} 80; then
+              echo "✅ Port 80 (HTTP) accessible"
               break
             else
-              echo "⏳ Attempt $i/5: Port 8000 not yet accessible, waiting..."
+              echo "⏳ Attempt $i/5: Port 80 not yet accessible, waiting..."
               sleep 10
             fi
           done
 
-          # Health check attempts
+          # Health check attempts (no port needed now!)
           for i in {1..10}; do
             echo "Health check attempt $i/10..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8000/health/" 2>&1; then
+            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk/health/" 2>&1; then
               echo "✅ Health check passed!"
               exit 0
             fi
@@ -345,25 +408,28 @@ jobs:
 
           echo "❌ Health checks failed"
           echo "🔍 Checking service status..."
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "sudo supervisorctl status || systemctl status postgresql redis-server || true"
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "sudo supervisorctl status && sudo nginx -t && sudo systemctl status nginx || true"
           exit 1
 
       - name: Deployment Summary
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Simple deployment successful!"
-            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8000"
-            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8000/health/"
-            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8000/swagger/"
-            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8000/admin/"
+            echo "✅ Deployment successful!"
+            echo "🌐 Application: http://backend.beautyspabyshea.co.uk"
+            echo "🔍 Health: http://backend.beautyspabyshea.co.uk/health/"
+            echo "📚 API docs: http://backend.beautyspabyshea.co.uk/swagger/"
+            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk/admin/"
             echo "📊 Status: sudo supervisorctl status"
-            echo "📋 Logs: tail -f /var/www/labmyshare/logs/supervisor.log"
+            echo "🌐 Nginx: sudo systemctl status nginx"
+            echo "🔒 Enable HTTPS: sudo certbot --nginx -d backend.beautyspabyshea.co.uk"
           else
-            echo "❌ Simple deployment failed"
+            echo "❌ Deployment failed"
             echo "🔍 Check logs with:"
             echo "  - sudo supervisorctl status"
+            echo "  - sudo systemctl status nginx"
+            echo "  - sudo nginx -t"
             echo "  - tail -f /var/www/labmyshare/logs/supervisor.log"
             echo "  - tail -f /var/www/labmyshare/logs/gunicorn_error.log"
-            echo "  - systemctl status postgresql redis-server"
+            echo "  - tail -f /var/log/nginx/error.log"
           fi
