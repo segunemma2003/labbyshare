@@ -73,7 +73,7 @@ jobs:
 
     environment:
       name: production
-      url: http://backend.beautyspabyshea.co.uk:8080
+      url: http://backend.beautyspabyshea.co.uk:8090
 
     steps:
       - name: Checkout code
@@ -92,43 +92,17 @@ jobs:
         run: |
           cat > deploy.sh << 'EOF'
           #!/bin/bash
-          set -e
-
-          echo "Deploying application..."
-          # (Deployment logic goes here, shortened for brevity)
-
-          # Create celery service (only if Redis is working)
-          if redis-cli ping >/dev/null 2>&1; then
-            echo "Creating celery service..."
-            sudo tee /etc/systemd/system/labmyshare-celery.service > /dev/null << 'CELERYEND'
-          [Unit]
-          Description=LabMyShare Celery Worker
-          After=network.target postgresql.service redis.service
-          Wants=postgresql.service redis.service
-          
-          [Service]
-          Type=simple
-          User=labmyshare
-          Group=labmyshare
-          WorkingDirectory=/var/www/labmyshare
-          Environment=PATH=/var/www/labmyshare/venv/bin
-          EnvironmentFile=/var/www/labmyshare/.env
-          ExecStart=/var/www/labmyshare/venv/bin/celery -A labmyshare worker --loglevel=info --concurrency=4 --logfile=/var/www/labmyshare/logs/celery.log
-          Restart=always
-          RestartSec=3
-          
-          [Install]
-          WantedBy=multi-user.target
-          CELERYEND
-            ENABLE_CELERY="yes"
-            echo "Celery service created"
-          else
-            echo "Skipping Celery service (Redis not available)"
-            ENABLE_CELERY="no"
-          fi
-
-          echo "Deployment script completed."
+          ...
+          # In your nginx config:
+          sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << 'NGINXEND'
+          server {
+              listen 8090;
+              server_name backend.beautyspabyshea.co.uk localhost;
+              ...
+          NGINXEND
+          ...
           EOF
+
           chmod +x deploy.sh
 
       - name: Copy and run deployment script
@@ -138,33 +112,38 @@ jobs:
 
       - name: Health Check
         run: |
-          echo "Health check..."
+          echo "🔍 Health check..."
           sleep 30
 
-          if nc -z ${{ secrets.SERVER_HOST }} 8080; then
-            echo "Port 8080 accessible"
+          if nc -z ${{ secrets.SERVER_HOST }} 8090; then
+            echo "✅ Port 8090 accessible"
           else
-            echo "Port 8080 not accessible"
+            echo "❌ Port 8090 not accessible"
             exit 1
           fi
 
           for i in {1..5}; do
             echo "Health check attempt $i/5..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8080/health/" 2>&1; then
-              echo "Health check passed!"
+            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8090/health/" 2>&1; then
+              echo "✅ Health check passed!"
               exit 0
             fi
             sleep 15
           done
 
-          echo "Health checks failed"
+          echo "❌ Health checks failed"
           exit 1
 
       - name: Deployment Summary
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "Deployment successful!"
+            echo "✅ Simple deployment successful!"
+            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8090"
+            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8090/health/"
+            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8090/swagger/"
+            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8090/admin/"
+            echo "📊 Status: sudo systemctl status labmyshare-web"
           else
-            echo "Deployment failed"
+            echo "❌ Simple deployment failed"
           fi
