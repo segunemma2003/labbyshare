@@ -157,10 +157,55 @@ jobs:
         run: |
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Create deployment files
+      - name: Deploy to Production Server
         run: |
-          # Create docker-compose.yml for HTTP-only deployment
-          cat > docker-compose.http.yml << 'EOF'
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' << 'DEPLOY_SCRIPT'
+            set -e
+            
+            echo "🚀 Starting deployment with full cleanup..."
+            
+            cd /var/www/labmyshare
+            
+            # COMPLETE CLEANUP - Clear everything
+            echo "🧹 Complete system cleanup..."
+            
+            # Stop and remove all containers
+            docker compose down --volumes --remove-orphans 2>/dev/null || true
+            docker stop $(docker ps -aq) 2>/dev/null || true
+            docker rm $(docker ps -aq) 2>/dev/null || true
+            
+            # Remove ALL Docker artifacts except persistent data
+            docker system prune -af --volumes
+            docker builder prune -af
+            docker image rm $(docker images -q) 2>/dev/null || true
+            
+            # Kill processes on ports
+            sudo fuser -k 8000/tcp 2>/dev/null || true
+            sudo fuser -k 8080/tcp 2>/dev/null || true
+            sudo fuser -k 5432/tcp 2>/dev/null || true
+            sudo fuser -k 6379/tcp 2>/dev/null || true
+            
+            sleep 15  # Wait for cleanup to complete
+            
+            # Update code
+            echo "📥 Updating code..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Create persistent storage directories (preserve database data)
+            echo "📁 Setting up persistent storage..."
+            mkdir -p docker/nginx accounts/management/commands
+            mkdir -p storage/{postgres,redis,static,media,logs,nginx-logs}
+            mkdir -p backups/postgres
+            
+            # Set permissions
+            sudo chown -R $USER:$USER storage/
+            chmod 755 storage/{redis,static,media,logs,nginx-logs}
+            chmod 700 storage/postgres
+            
+            # Create Docker Compose configuration
+            echo "📋 Creating Docker Compose configuration..."
+            cat > docker-compose.yml << 'EOF'
           services:
             db:
               container_name: labmyshare_db
@@ -183,7 +228,7 @@ jobs:
                 start_period: 30s
               networks:
                 - labmyshare_network
-
+          
             redis:
               container_name: labmyshare_redis
               image: redis:7-alpine
@@ -200,7 +245,7 @@ jobs:
                 retries: 5
               networks:
                 - labmyshare_network
-
+          
             web:
               container_name: labmyshare_web
               image: ghcr.io/${{ github.repository }}:latest
@@ -212,7 +257,7 @@ jobs:
                   echo 'Database ready!' &&
                   python manage.py migrate --noinput &&
                   python manage.py collectstatic --noinput &&
-                  gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120 --max-requests 1000 --max-requests-jitter 100
+                  gunicorn labmyshare.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120
                 "
               volumes:
                 - static_volume:/app/staticfiles
@@ -235,7 +280,7 @@ jobs:
                 start_period: 90s
               networks:
                 - labmyshare_network
-
+          
             celery:
               container_name: labmyshare_celery
               image: ghcr.io/${{ github.repository }}:latest
@@ -243,7 +288,7 @@ jobs:
               command: >
                 sh -c "
                   until nc -z db 5432 && nc -z redis 6379; do sleep 2; done &&
-                  celery -A labmyshare worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
+                  celery -A labmyshare worker --loglevel=info --concurrency=4
                 "
               volumes:
                 - media_volume:/app/media
@@ -260,7 +305,7 @@ jobs:
                 retries: 3
               networks:
                 - labmyshare_network
-
+          
             celery-beat:
               container_name: labmyshare_celery_beat
               image: ghcr.io/${{ github.repository }}:latest
@@ -277,14 +322,9 @@ jobs:
               depends_on:
                 - db
                 - redis
-              healthcheck:
-                test: ["CMD", "pgrep", "-f", "celery.*beat"]
-                interval: 30s
-                timeout: 10s
-                retries: 3
               networks:
                 - labmyshare_network
-
+          
             nginx:
               container_name: labmyshare_nginx
               image: nginx:alpine
@@ -302,30 +342,7 @@ jobs:
                   condition: service_healthy
               networks:
                 - labmyshare_network
-
-            db-backup:
-              container_name: labmyshare_db_backup
-              image: postgres:15
-              restart: unless-stopped
-              environment:
-                POSTGRES_DB: labmyshare_db
-                POSTGRES_USER: labmyshare
-                POSTGRES_PASSWORD: labmyshare2020
-                PGPASSWORD: labmyshare2020
-              volumes:
-                - ./backups/postgres:/backups
-              command: >
-                sh -c "
-                  until nc -z db 5432; do sleep 5; done &&
-                  echo '0 2 * * * cd /backups && pg_dump -h db -U labmyshare -d labmyshare_db > backup_$$(date +%%Y%%m%%d_%%H%%M%%S).sql && find /backups -name \"backup_*.sql\" -mtime +7 -delete' | crontab - &&
-                  crond -f
-                "
-              depends_on:
-                db:
-                  condition: service_healthy
-              networks:
-                - labmyshare_network
-
+          
           volumes:
             postgres_data:
               driver: local
@@ -363,14 +380,17 @@ jobs:
                 type: none
                 o: bind
                 device: /var/www/labmyshare/storage/nginx-logs
-
+          
           networks:
             labmyshare_network:
               driver: bridge
           EOF
-
-          # Create nginx config for HTTP-only
-          cat > nginx.conf << 'EOF'
+            
+            # Create Nginx configuration
+            echo "🌐 Creating Nginx configuration..."
+            mkdir -p docker/nginx
+            
+            cat > docker/nginx/nginx.conf << 'NGINX_CONF'
           user nginx;
           worker_processes auto;
           error_log /var/log/nginx/error.log warn;
@@ -378,187 +398,106 @@ jobs:
           
           events {
             worker_connections 1024;
-            use epoll;
-            multi_accept on;
           }
           
           http {
             include /etc/nginx/mime.types;
             default_type application/octet-stream;
-            
-            # Logging
-            log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                           '$status $body_bytes_sent "$http_referer" '
-                           '"$http_user_agent" "$http_x_forwarded_for"';
-            access_log /var/log/nginx/access.log main;
-            
-            # Performance
             sendfile on;
-            tcp_nopush on;
-            tcp_nodelay on;
             keepalive_timeout 65;
-            types_hash_max_size 2048;
             client_max_body_size 10M;
             
-            # Gzip
             gzip on;
             gzip_vary on;
             gzip_min_length 1024;
-            gzip_comp_level 6;
-            gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+            gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
             
             include /etc/nginx/conf.d/*.conf;
           }
-          EOF
-
-          # Create HTTP-only site configuration
-          cat > http-only.conf << 'EOF'
+          NGINX_CONF
+            
+            cat > docker/nginx/http-only.conf << 'NGINX_SITE'
           upstream labmyshare {
             server web:8000 max_fails=3 fail_timeout=30s;
           }
-          
-          # Rate limiting
-          limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-          limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
           
           server {
             listen 80;
             server_name backend.beautyspabyshea.co.uk localhost;
             
-            # Security headers for HTTP
+            # Security headers
             add_header X-Frame-Options "SAMEORIGIN" always;
             add_header X-Content-Type-Options "nosniff" always;
             add_header X-XSS-Protection "1; mode=block" always;
-            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
             
-            # Increase timeouts
+            # Timeouts
             proxy_connect_timeout 60s;
             proxy_send_timeout 60s;
             proxy_read_timeout 60s;
-            proxy_next_upstream_timeout 60s;
             
-            # Main application
             location / {
               proxy_pass http://labmyshare;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
               proxy_set_header X-Forwarded-Proto $scheme;
-              proxy_set_header Connection "";
-              proxy_http_version 1.1;
-              
-              # Error handling
-              proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
-              proxy_intercept_errors on;
             }
             
-            # API endpoints with rate limiting
-            location /api/v1/auth/ {
-              limit_req zone=auth burst=10 nodelay;
-              proxy_pass http://labmyshare;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-            }
-            
-            location /api/ {
-              limit_req zone=api burst=20 nodelay;
-              proxy_pass http://labmyshare;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-            }
-            
-            # Health check endpoint
             location /health/ {
               proxy_pass http://labmyshare;
               proxy_set_header Host $host;
               access_log off;
-              
-              # Shorter timeouts for health checks
-              proxy_connect_timeout 10s;
-              proxy_send_timeout 10s;
-              proxy_read_timeout 10s;
             }
             
-            # Alternative health check without trailing slash
             location /health {
               proxy_pass http://labmyshare;
               proxy_set_header Host $host;
               access_log off;
-              
-              proxy_connect_timeout 10s;
-              proxy_send_timeout 10s;
-              proxy_read_timeout 10s;
             }
             
-            # Admin interface
-            location /admin/ {
-              proxy_pass http://labmyshare;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-            }
-            
-            # API documentation
-            location ~ ^/(swagger|redoc)/ {
-              proxy_pass http://labmyshare;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-              proxy_set_header X-Forwarded-Proto $scheme;
-            }
-            
-            # Static files
             location /static/ {
               alias /var/www/static/;
               expires 30d;
-              add_header Cache-Control "public, immutable";
-              access_log off;
             }
             
-            # Media files
             location /media/ {
               alias /var/www/media/;
               expires 7d;
-              add_header Cache-Control "public";
-              
-              # Security for uploaded files
-              location ~* \.(php|phtml|pl|py|jsp|asp|sh|cgi)$ {
-                deny all;
-              }
-            }
-            
-            # Nginx status endpoint for monitoring
-            location /nginx-status {
-              stub_status on;
-              access_log off;
-              allow 127.0.0.1;
-              allow 172.0.0.0/8;
-              deny all;
-            }
-            
-            # Robots.txt
-            location = /robots.txt {
-              add_header Content-Type text/plain;
-              return 200 "User-agent: *\nDisallow: /admin/\nDisallow: /api/v1/admin/\n";
-              access_log off;
-            }
-            
-            # Favicon
-            location = /favicon.ico {
-              log_not_found off;
-              access_log off;
-              return 204;
             }
           }
-          EOF
-
-          # Create management command for initial data
-          cat > create_initial_data.py << 'EOF'
+          NGINX_SITE
+            
+            # Create environment file
+            echo "⚙️ Creating environment configuration..."
+            cat > .env << 'ENV_FILE'
+          SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
+          DEBUG=False
+          ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
+          
+          DB_NAME=labmyshare_db
+          DB_USER=labmyshare
+          DB_PASSWORD=labmyshare2020
+          DB_HOST=db
+          DB_PORT=5432
+          
+          REDIS_URL=redis://redis:6379/1
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          
+          EMAIL_HOST=smtp.resend.com
+          EMAIL_PORT=587
+          EMAIL_HOST_USER=resend
+          EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
+          DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
+          ENV_FILE
+            
+            # Create management command
+            echo "👤 Creating admin setup..."
+            mkdir -p accounts/management/commands
+            touch accounts/management/__init__.py
+            touch accounts/management/commands/__init__.py
+            
+            cat > accounts/management/commands/create_initial_data.py << 'MGMT_CMD'
           from django.core.management.base import BaseCommand
           from django.contrib.auth import get_user_model
           
@@ -578,146 +517,33 @@ jobs:
                           )
                           self.stdout.write(self.style.SUCCESS("✅ Superuser created"))
                       else:
-                          self.stdout.write(self.style.WARNING("ℹ️  Superuser already exists"))
+                          self.stdout.write(self.style.WARNING("ℹ️ Superuser already exists"))
                   except Exception as e:
                       self.stdout.write(self.style.ERROR(f"❌ Error: {e}"))
-          EOF
-
-          # Create production environment file
-          cat > production.env << 'EOF'
-          SECRET_KEY=ghfjgk.hl;iogulfkydjtxfgcvjbk.hllfkdtjxgchvjgkifuydcghvjgv
-          DEBUG=False
-          ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
-          
-          # Database - Persistent PostgreSQL
-          DB_NAME=labmyshare_db
-          DB_USER=labmyshare
-          DB_PASSWORD=labmyshare2020
-          DB_HOST=db
-          DB_PORT=5432
-          
-          # Redis
-          REDIS_URL=redis://redis:6379/1
-          CELERY_BROKER_URL=redis://redis:6379/0
-          CELERY_RESULT_BACKEND=redis://redis:6379/0
-          
-          # Email
-          EMAIL_HOST=smtp.resend.com
-          EMAIL_PORT=587
-          EMAIL_HOST_USER=resend
-          EMAIL_HOST_PASSWORD=re_ZBwZZ2tj_AMtGvcpxoa1DofEXdV3BKM2f
-          DEFAULT_FROM_EMAIL=noreply@beautyspabyshea.co.uk
-          
-          # App specific
-          GITHUB_REPOSITORY=${{ github.repository }}
-          EOF
-
-      - name: Copy files to server
-        run: |
-          scp docker-compose.http.yml ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
-          scp nginx.conf ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
-          scp http-only.conf ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
-          scp create_initial_data.py ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
-          scp production.env ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
-
-      - name: Deploy to Production Server
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' << 'DEPLOY_SCRIPT'
-            set -e
+          MGMT_CMD
             
-            echo "🚀 Starting LabMyShare HTTP-only deployment..."
-            
-            # Navigate to application directory
-            cd /var/www/labmyshare
-            
-            # COMPREHENSIVE CLEANUP - Clear all builds and containers
-            echo "🧹 Comprehensive cleanup - clearing all builds..."
-            
-            # Stop all containers
-            docker compose down --volumes --remove-orphans 2>/dev/null || true
-            docker stop $(docker ps -aq) 2>/dev/null || true
-            docker rm $(docker ps -aq) 2>/dev/null || true
-            
-            # Remove all images, containers, and build cache
-            docker system prune -af --volumes
-            docker builder prune -af
-            
-            # Kill any processes on target ports
-            sudo fuser -k 8000/tcp 2>/dev/null || true
-            sudo fuser -k 8080/tcp 2>/dev/null || true
-            sudo fuser -k 5432/tcp 2>/dev/null || true
-            sudo fuser -k 6379/tcp 2>/dev/null || true
-            
-            # Wait for ports to be completely freed
-            echo "⏳ Waiting for ports to be freed..."
-            sleep 10
-            
-            # Backup current setup if it exists
-            if [ -f docker-compose.yml ]; then
-              cp docker-compose.yml docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)
-              echo "✅ Backup created"
-            fi
-            
-            # Pull latest code
-            echo "📥 Pulling latest code..."
-            git fetch origin
-            git reset --hard origin/main
-            
-            # Create and setup persistent storage directories
-            echo "📁 Setting up persistent storage directories..."
-            mkdir -p docker/nginx docker/scripts accounts/management/commands
-            mkdir -p storage/{postgres,redis,static,media,logs,nginx-logs}
-            mkdir -p backups/postgres
-            
-            # Set proper permissions for persistent data
-            echo "🔐 Setting proper permissions for persistent storage..."
-            sudo chown -R $USER:$USER storage/
-            chmod 755 storage/{redis,static,media,logs,nginx-logs}
-            chmod 700 storage/postgres  # Restrict database access
-            
-            # Copy deployment files
-            echo "📋 Setting up configuration files..."
-            cp /tmp/docker-compose.http.yml docker-compose.yml
-            cp /tmp/nginx.conf docker/nginx/nginx.conf
-            cp /tmp/http-only.conf docker/nginx/http-only.conf
-            cp /tmp/production.env .env
-            
-            # Setup management command
-            touch accounts/management/__init__.py
-            touch accounts/management/commands/__init__.py
-            cp /tmp/create_initial_data.py accounts/management/commands/
-            
-            # Docker login
-            echo "🐳 Logging into Docker registry..."
+            # Docker login and pull
+            echo "🐳 Docker operations..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             
-            # Pull fresh images
-            echo "📥 Pulling fresh Docker images..."
             if ! docker compose pull; then
               echo "❌ Failed to pull images"
               exit 1
             fi
-            echo "✅ Fresh images pulled successfully"
             
-            # Verify database persistence setup
-            echo "🗄️ Verifying database persistence..."
-            if [ ! -d "storage/postgres" ]; then
-              echo "❌ Database storage directory not found"
-              exit 1
-            fi
-            echo "✅ Database persistence verified"
+            # Deploy services
+            echo "🚀 Starting deployment..."
             
-            # Start database and redis first for persistence check
-            echo "🗄️ Starting persistent database and redis..."
+            # Start core services first
             docker compose up -d db redis
             
-            # Wait for database to be ready
-            echo "⏳ Waiting for persistent database..."
+            # Wait for database
+            echo "⏳ Waiting for database..."
             timeout=60
             counter=0
             while [ $counter -lt $timeout ]; do
               if docker compose exec -T db pg_isready -U labmyshare -d labmyshare_db > /dev/null 2>&1; then
-                echo "✅ Persistent database ready!"
+                echo "✅ Database ready!"
                 break
               fi
               counter=$((counter + 1))
@@ -726,188 +552,99 @@ jobs:
                 docker compose logs db
                 exit 1
               fi
-              echo "⏳ Waiting for database... ($counter/$timeout)"
               sleep 1
             done
             
-            # Verify database persistence by checking data directory
-            if [ "$(sudo ls -la storage/postgres/ | wc -l)" -gt 3 ]; then
-              echo "✅ Database has persistent data"
-            else
-              echo "ℹ️ Fresh database - will initialize"
-            fi
-            
-            # Start web container
-            echo "🌐 Starting web container..."
+            # Start web service
             docker compose up -d web
             
-            # Wait for web container health
-            echo "⏳ Waiting for web container health..."
+            # Wait for web health
+            echo "⏳ Waiting for web service..."
             timeout=120
             counter=0
             while [ $counter -lt $timeout ]; do
-              if docker compose ps web | grep -q "healthy"; then
-                echo "✅ Web container is healthy!"
+              if docker compose exec -T web curl -f http://localhost:8000/health/ > /dev/null 2>&1; then
+                echo "✅ Web service ready!"
                 break
               fi
-              counter=$((counter + 5))
+              counter=$((counter + 10))
               if [ $counter -eq $timeout ]; then
-                echo "❌ Web container health check failed"
+                echo "❌ Web service timeout"
                 docker compose logs web --tail=50
                 exit 1
               fi
-              echo "⏳ Waiting for web health... ($counter/$timeout seconds)"
-              sleep 5
+              sleep 10
             done
             
-            # Start all remaining services
-            echo "🚀 Starting all services..."
+            # Start remaining services
             docker compose up -d
-            
-            # Wait for all services
-            echo "⏳ Waiting for all services to be ready..."
             sleep 30
             
-            # Verify all services are running
-            echo "📊 Checking all services..."
-            EXPECTED_SERVICES="db redis web celery celery-beat nginx db-backup"
-            for service in $EXPECTED_SERVICES; do
-              if docker compose ps $service | grep -q "Up"; then
-                echo "✅ $service is running"
-              else
-                echo "❌ $service is not running"
-                docker compose logs $service --tail=20
-              fi
-            done
-            
-            # Configure firewall for HTTP
-            echo "🔥 Configuring firewall for HTTP access..."
-            if command -v ufw >/dev/null 2>&1; then
-              sudo ufw allow 8080/tcp || true
-              sudo ufw allow 22/tcp || true
-              echo "✅ Firewall configured for HTTP on port 8080"
-            fi
-            
-            # Test port binding
-            echo "🔌 Testing HTTP port binding..."
-            if netstat -tulpn | grep -q ":8080.*LISTEN"; then
-              echo "✅ HTTP port 8080 is listening"
-            else
-              echo "❌ HTTP port 8080 is not listening"
-              netstat -tulpn | grep -E ":(8000|8080)"
-              exit 1
-            fi
-            
-            # Run Django setup for persistent database
-            echo "📊 Running Django setup..."
+            # Run Django setup
+            echo "⚙️ Django setup..."
             docker compose exec -T web python manage.py migrate --noinput
             docker compose exec -T web python manage.py collectstatic --noinput
             docker compose exec -T web python manage.py create_initial_data
             
-            # Final service restart
-            echo "🔄 Final service restart..."
+            # Configure firewall
+            echo "🔥 Configuring firewall..."
+            if command -v ufw >/dev/null 2>&1; then
+              sudo ufw allow 8080/tcp || true
+              sudo ufw allow 22/tcp || true
+            fi
+            
+            # Final restart
             docker compose restart web nginx
             sleep 20
             
-            # Show final status
-            echo "📊 Final deployment status:"
+            # Show status
+            echo "📊 Final status:"
             docker compose ps
             
             # Test database persistence
-            echo "🗄️ Testing database persistence..."
             DB_SIZE=$(docker compose exec -T db psql -U labmyshare -d labmyshare_db -t -c "SELECT pg_size_pretty(pg_database_size('labmyshare_db'));" | tr -d ' ')
             echo "✅ Database size: $DB_SIZE"
             
-            # Cleanup
-            docker image prune -af --filter "until=24h"
-            rm /tmp/docker-compose.http.yml /tmp/nginx.conf /tmp/http-only.conf /tmp/create_initial_data.py /tmp/production.env
-            
-            echo "✅ HTTP-only deployment completed successfully!"
-            echo "🌐 Application available at: http://backend.beautyspabyshea.co.uk:8080"
-            echo "🗄️ Database is persistent and stored in: /var/www/labmyshare/storage/postgres"
+            echo "✅ Deployment completed!"
+            echo "🌐 HTTP: http://backend.beautyspabyshea.co.uk:8080"
+            echo "🗄️ Database persistent at: /var/www/labmyshare/storage/postgres"
           DEPLOY_SCRIPT
 
       - name: Health Check
         run: |
-          echo "🔍 Running HTTP-only health checks..."
+          echo "🔍 Health check..."
           
-          # Test server connectivity
-          echo "🌐 Testing server connectivity..."
-          if ! ping -c 1 ${{ secrets.SERVER_HOST }} > /dev/null 2>&1; then
-            echo "❌ Server is not reachable"
-            exit 1
-          fi
-          echo "✅ Server is reachable"
-          
-          # Check container status
-          echo "📊 Checking container status..."
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && docker compose ps'
-          
-          # Test HTTP port connectivity
-          echo "🔌 Testing HTTP port 8080 connectivity..."
+          # Test connectivity
           if nc -z ${{ secrets.SERVER_HOST }} 8080; then
-            echo "✅ HTTP port 8080 is accessible"
+            echo "✅ Port 8080 accessible"
           else
-            echo "❌ HTTP port 8080 is not accessible"
+            echo "❌ Port 8080 not accessible"
             exit 1
           fi
           
-          # Test health endpoints with retry
-          echo "🏥 Testing health endpoints..."
+          # Test endpoints
           for i in {1..5}; do
-            echo "🔍 Health check attempt $i/5..."
-            
-            # Try different health endpoints
-            for endpoint in "/health/" "/health" "/"; do
-              echo "Testing HTTP endpoint: $endpoint"
-              if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8080$endpoint" 2>&1; then
-                echo "✅ HTTP health check passed on $endpoint!"
-                exit 0
-              fi
-            done
-            
-            if [ $i -lt 5 ]; then
-              echo "⏳ Health check failed, waiting 20 seconds before retry..."
-              sleep 20
+            echo "Health check attempt $i/5..."
+            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8080/health/" 2>&1; then
+              echo "✅ Health check passed!"
+              exit 0
             fi
+            sleep 20
           done
           
-          echo "❌ All HTTP health checks failed"
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} 'cd /var/www/labmyshare && docker compose logs web --tail=50'
+          echo "❌ Health checks failed"
           exit 1
 
       - name: Deployment Summary
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ HTTP-only deployment successful!"
+            echo "✅ Deployment successful!"
             echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8080"
             echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8080/health/"
             echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8080/swagger/"
             echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8080/admin/"
-            echo "🗄️ Database: Persistent PostgreSQL with bind mount"
+            echo "🗄️ Database: Persistent PostgreSQL"
           else
-            echo "❌ HTTP-only deployment failed"
+            echo "❌ Deployment failed"
           fi
-
-  cleanup:
-    needs: deploy
-    runs-on: ubuntu-latest
-    if: always() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-
-    steps:
-      - name: Clean up old container images
-        run: |
-          gh api --method GET \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/user/packages/container/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')/versions" \
-            --field per_page=100 | \
-          jq -r '.[10:] | .[].id' | \
-          head -20 | \
-          xargs -I {} gh api --method DELETE \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/user/packages/container/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')/versions/{}" || echo "Cleanup completed"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
