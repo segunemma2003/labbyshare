@@ -171,10 +171,8 @@ jobs:
       - name: Deploy to server
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} << EOF
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
             set -e
             
             # Navigate to application directory
@@ -182,15 +180,15 @@ jobs:
             
             # Create backup of current deployment
             if [ -f docker-compose.yml ]; then
-              sudo cp docker-compose.yml docker-compose.yml.backup.\$(date +%Y%m%d_%H%M%S)
+              sudo cp docker-compose.yml docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)
             fi
             
             # Pull latest changes
             git fetch origin
             git reset --hard origin/main
             
-            # Update environment file with secrets
-            sudo tee .env > /dev/null << 'ENVEOF'
+            # Update environment file with secrets - using cat with proper EOF termination
+            cat > .env << 'ENVEOF'
             SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
             DEBUG=False
             ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
@@ -232,11 +230,11 @@ jobs:
             TWILIO_PHONE_NUMBER=${{ secrets.TWILIO_PHONE_NUMBER }}
             
             # GitHub Repository for image
-            GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+            GITHUB_REPOSITORY=${{ env.GITHUB_REPOSITORY }}
             ENVEOF
             
             # Log in to GitHub Container Registry
-            echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             
             # Copy the HTTP-only docker-compose file
             cp docker-compose.production.yml docker-compose.yml
