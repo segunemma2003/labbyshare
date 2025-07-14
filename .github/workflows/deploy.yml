@@ -163,50 +163,40 @@ jobs:
           sudo systemctl start postgresql
           sudo systemctl enable postgresql
           
-          # Create database and user with proper permissions
+          # Create database setup script
+          cat > /tmp/setup_db.sql << 'SQLEND'
+          DROP DATABASE IF EXISTS labmyshare_db;
+          DROP USER IF EXISTS labmyshare;
+          CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';
+          CREATE DATABASE labmyshare_db OWNER labmyshare;
+          GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;
+          SQLEND
+          
+          # Create schema permissions script
+          cat > /tmp/setup_schema.sql << 'SCHEMAEND'
+          GRANT ALL ON SCHEMA public TO labmyshare;
+          GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO labmyshare;
+          GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO labmyshare;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO labmyshare;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO labmyshare;
+          ALTER SCHEMA public OWNER TO labmyshare;
+          ALTER ROLE labmyshare SET client_encoding TO 'utf8';
+          ALTER ROLE labmyshare SET default_transaction_isolation TO 'read committed';
+          ALTER ROLE labmyshare SET timezone TO 'UTC';
+          ALTER ROLE labmyshare CREATEDB;
+          SCHEMAEND
+          
+          # Execute database setup
           echo "📋 Creating database and user..."
-          sudo -u postgres psql << 'DBSETUP'
--- Drop existing user and database if they exist (for clean setup)
-DROP DATABASE IF EXISTS labmyshare_db;
-DROP USER IF EXISTS labmyshare;
-
--- Create user first
-CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';
-
--- Create database owned by the user
-CREATE DATABASE labmyshare_db OWNER labmyshare;
-
--- Grant all privileges on the database
-GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;
-
--- Connect to the database and grant schema permissions
-\c labmyshare_db
-
--- Grant all privileges on public schema
-GRANT ALL ON SCHEMA public TO labmyshare;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO labmyshare;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO labmyshare;
-
--- Grant default privileges for future objects
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO labmyshare;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO labmyshare;
-
--- Make labmyshare the owner of the public schema
-ALTER SCHEMA public OWNER TO labmyshare;
-
--- Set additional role attributes
-ALTER ROLE labmyshare SET client_encoding TO 'utf8';
-ALTER ROLE labmyshare SET default_transaction_isolation TO 'read committed';
-ALTER ROLE labmyshare SET timezone TO 'UTC';
-ALTER ROLE labmyshare CREATEDB;
-DBSETUP
+          sudo -u postgres psql -f /tmp/setup_db.sql
           
-          # Verify database setup
-          echo "🔍 Verifying database setup..."
-          sudo -u postgres psql -d labmyshare_db -c "\du labmyshare" || echo "User verification failed"
-          sudo -u postgres psql -d labmyshare_db -c "\l labmyshare_db" || echo "Database verification failed"
+          echo "🔐 Setting up schema permissions..."
+          sudo -u postgres psql -d labmyshare_db -f /tmp/setup_schema.sql
           
-          # Test connection as labmyshare user
+          # Clean up SQL files
+          rm -f /tmp/setup_db.sql /tmp/setup_schema.sql
+          
+          # Test connection
           echo "🔌 Testing database connection..."
           if PGPASSWORD=labmyshare2020 psql -h localhost -U labmyshare -d labmyshare_db -c "SELECT 1;" >/dev/null 2>&1; then
             echo "✅ Database connection successful"
