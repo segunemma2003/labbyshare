@@ -73,7 +73,7 @@ jobs:
 
     environment:
       name: production
-      url: http://backend.beautyspabyshea.co.uk:8090
+      url: http://backend.beautyspabyshea.co.uk:8100
 
     steps:
       - name: Checkout code
@@ -91,10 +91,10 @@ jobs:
       - name: Create deployment script
         run: |
           cat > deploy.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          # deployment script logic here...
-          EOF
+#!/bin/bash
+set -e
+# deployment script logic here...
+EOF
           chmod +x deploy.sh
 
       - name: Copy and run deployment script
@@ -107,16 +107,16 @@ jobs:
           echo "🔍 Health check..."
           sleep 30
 
-          if nc -z ${{ secrets.SERVER_HOST }} 8090; then
-            echo "✅ Port 8090 accessible"
+          if nc -z ${{ secrets.SERVER_HOST }} 8100; then
+            echo "✅ Port 8100 accessible"
           else
-            echo "❌ Port 8090 not accessible"
+            echo "❌ Port 8100 not accessible"
             exit 1
           fi
 
           for i in {1..5}; do
             echo "Health check attempt $i/5..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8090/health/" 2>&1; then
+            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk:8100/health/" 2>&1; then
               echo "✅ Health check passed!"
               exit 0
             fi
@@ -131,10 +131,10 @@ jobs:
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             echo "✅ Simple deployment successful!"
-            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8090"
-            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8090/health/"
-            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8090/swagger/"
-            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8090/admin/"
+            echo "🌐 Application: http://backend.beautyspabyshea.co.uk:8100"
+            echo "🔍 Health: http://backend.beautyspabyshea.co.uk:8100/health/"
+            echo "📚 API docs: http://backend.beautyspabyshea.co.uk:8100/swagger/"
+            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk:8100/admin/"
             echo "📊 Status: sudo systemctl status labmyshare-web"
           else
             echo "❌ Simple deployment failed"
