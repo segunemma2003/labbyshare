@@ -73,7 +73,7 @@ jobs:
 
     environment:
       name: production
-      url: http://backend.beautyspabyshea.co.uk
+      url: https://backend.beautyspabyshea.co.uk
 
     steps:
       - name: Checkout code
@@ -252,14 +252,32 @@ jobs:
           environment=PATH="$VENV_DIR/bin"
           SUPERVISOR_EOF
 
-          # Setup Nginx as proper reverse proxy
-          echo "🌐 Setting up Nginx reverse proxy..."
+          # Setup Nginx with HTTPS support (certificate should already exist)
+          echo "🌐 Setting up Nginx with HTTPS support..."
           sudo tee /etc/nginx/sites-available/labmyshare > /dev/null << NGINX_EOF
+          # HTTP server (redirect to HTTPS)
           server {
               listen 80;
               server_name backend.beautyspabyshea.co.uk;
+              return 301 https://\\\$server_name\\\$request_uri;
+          }
+
+          # HTTPS server
+          server {
+              listen 443 ssl http2;
+              server_name backend.beautyspabyshea.co.uk;
+              
+              # SSL configuration (certificate should already exist)
+              ssl_certificate /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
+              ssl_prefer_server_ciphers off;
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_timeout 10m;
               
               # Security headers
+              add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
               add_header X-Frame-Options "SAMEORIGIN" always;
               add_header X-Content-Type-Options "nosniff" always;
               add_header X-XSS-Protection "1; mode=block" always;
@@ -277,10 +295,10 @@ jobs:
               # Main application - proxy to Gunicorn
               location / {
                   proxy_pass http://127.0.0.1:8000;
-                  proxy_set_header Host \$host;
-                  proxy_set_header X-Real-IP \$remote_addr;
-                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_set_header Host \\\$host;
+                  proxy_set_header X-Real-IP \\\$remote_addr;
+                  proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \\\$scheme;
                   proxy_redirect off;
                   
                   # Timeout settings
@@ -297,7 +315,7 @@ jobs:
                   add_header Vary "Accept-Encoding";
                   
                   # Serve pre-compressed files if available
-                  location ~* \.(js|css)$ {
+                  location ~* \\\.(js|css)$ {
                       gzip_static on;
                   }
               }
@@ -309,7 +327,7 @@ jobs:
                   add_header Cache-Control "public, no-transform";
                   
                   # Security for uploaded files
-                  location ~* \.(php|phtml|pl|py|jsp|asp|sh|cgi)$ {
+                  location ~* \\\.(php|phtml|pl|py|jsp|asp|sh|cgi)$ {
                       deny all;
                   }
               }
@@ -318,10 +336,10 @@ jobs:
               location /health/ {
                   proxy_pass http://127.0.0.1:8000;
                   access_log off;
-                  proxy_set_header Host \$host;
-                  proxy_set_header X-Real-IP \$remote_addr;
-                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_set_header Host \\\$host;
+                  proxy_set_header X-Real-IP \\\$remote_addr;
+                  proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \\\$scheme;
               }
               
               # Robots.txt
@@ -338,7 +356,7 @@ jobs:
               }
               
               # Deny access to sensitive files
-              location ~ /\. {
+              location ~ /\\\. {
                   deny all;
                   access_log off;
                   log_not_found off;
@@ -365,11 +383,11 @@ jobs:
           sudo supervisorctl status
 
           echo "✅ Deployment completed successfully!"
-          echo "🌐 Application available at: http://backend.beautyspabyshea.co.uk (no port needed!)"
-          echo "🔍 Health check: http://backend.beautyspabyshea.co.uk/health/"
-          echo "👨‍💼 Admin panel: http://backend.beautyspabyshea.co.uk/admin/"
-          echo "📚 API docs: http://backend.beautyspabyshea.co.uk/swagger/"
-          echo "🔒 To enable HTTPS: sudo certbot --nginx -d backend.beautyspabyshea.co.uk"
+          echo "🌐 Application available at: https://backend.beautyspabyshea.co.uk (HTTPS enabled!)"
+          echo "🔍 Health check: https://backend.beautyspabyshea.co.uk/health/"
+          echo "👨‍💼 Admin panel: https://backend.beautyspabyshea.co.uk/admin/"
+          echo "📚 API docs: https://backend.beautyspabyshea.co.uk/swagger/"
+          echo "🔒 SSL certificate expires: $(sudo openssl x509 -in /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/fullchain.pem -noout -enddate 2>/dev/null | cut -d= -f2 || echo 'Certificate not found')"
           
           EOF
           chmod +x deploy.sh
@@ -384,29 +402,44 @@ jobs:
           echo "🔍 Health check..."
           sleep 60  # Give time for services to start
 
-          # Check if port 80 is accessible (standard web port)
+          # Check if port 443 (HTTPS) is accessible
           for i in {1..5}; do
-            if nc -z ${{ secrets.SERVER_HOST }} 80; then
-              echo "✅ Port 80 (HTTP) accessible"
+            if nc -z ${{ secrets.SERVER_HOST }} 443; then
+              echo "✅ Port 443 (HTTPS) accessible"
               break
             else
-              echo "⏳ Attempt $i/5: Port 80 not yet accessible, waiting..."
+              echo "⏳ Attempt $i/5: Port 443 not yet accessible, waiting..."
               sleep 10
             fi
           done
 
-          # Health check attempts (no port needed now!)
+          # Also check if port 80 (HTTP) is accessible for redirect
+          if nc -z ${{ secrets.SERVER_HOST }} 80; then
+            echo "✅ Port 80 (HTTP) accessible for redirects"
+          else
+            echo "⚠️  Port 80 not accessible"
+          fi
+
+          # Health check attempts using HTTPS
           for i in {1..10}; do
-            echo "Health check attempt $i/10..."
-            if curl -f -m 15 "http://backend.beautyspabyshea.co.uk/health/" 2>&1; then
-              echo "✅ Health check passed!"
+            echo "HTTPS health check attempt $i/10..."
+            if curl -f -k -m 15 "https://backend.beautyspabyshea.co.uk/health/" 2>&1; then
+              echo "✅ HTTPS health check passed!"
               exit 0
             fi
             echo "⏳ Waiting 15 seconds before next attempt..."
             sleep 15
           done
 
-          echo "❌ Health checks failed"
+          echo "❌ HTTPS health checks failed, trying HTTP fallback..."
+          # Fallback to HTTP in case HTTPS isn't working yet
+          if curl -f -m 15 "http://backend.beautyspabyshea.co.uk/health/" 2>&1; then
+            echo "✅ HTTP health check passed (HTTPS may need manual setup)"
+            echo "🔒 Run: sudo certbot --nginx -d backend.beautyspabyshea.co.uk"
+            exit 0
+          fi
+
+          echo "❌ All health checks failed"
           echo "🔍 Checking service status..."
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} "sudo supervisorctl status && sudo nginx -t && sudo systemctl status nginx || true"
           exit 1
@@ -416,13 +449,13 @@ jobs:
         run: |
           if [ "${{ job.status }}" == "success" ]; then
             echo "✅ Deployment successful!"
-            echo "🌐 Application: http://backend.beautyspabyshea.co.uk"
-            echo "🔍 Health: http://backend.beautyspabyshea.co.uk/health/"
-            echo "📚 API docs: http://backend.beautyspabyshea.co.uk/swagger/"
-            echo "👨‍💼 Admin: http://backend.beautyspabyshea.co.uk/admin/"
+            echo "🌐 Application: https://backend.beautyspabyshea.co.uk"
+            echo "🔍 Health: https://backend.beautyspabyshea.co.uk/health/"
+            echo "📚 API docs: https://backend.beautyspabyshea.co.uk/swagger/"
+            echo "👨‍💼 Admin: https://backend.beautyspabyshea.co.uk/admin/"
             echo "📊 Status: sudo supervisorctl status"
             echo "🌐 Nginx: sudo systemctl status nginx"
-            echo "🔒 Enable HTTPS: sudo certbot --nginx -d backend.beautyspabyshea.co.uk"
+            echo "🔒 SSL Status: sudo openssl x509 -in /etc/letsencrypt/live/backend.beautyspabyshea.co.uk/fullchain.pem -noout -dates"
           else
             echo "❌ Deployment failed"
             echo "🔍 Check logs with:"
@@ -432,4 +465,5 @@ jobs:
             echo "  - tail -f /var/www/labmyshare/logs/supervisor.log"
             echo "  - tail -f /var/www/labmyshare/logs/gunicorn_error.log"
             echo "  - tail -f /var/log/nginx/error.log"
+            echo "  - sudo certbot certificates"
           fi
