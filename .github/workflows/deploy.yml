@@ -197,64 +197,24 @@ jobs:
               print('Superuser already exists')
           PYTHON_EOF
 
-          # Update Django settings for production HTTPS
-          echo "⚙️ Configuring Django for HTTPS..."
-          python3 << 'PYTHON_EOF'
-import re
-
-# Read current settings
-with open('labmyshare/settings.py', 'r') as f:
-    content = f.read()
-
-# Ensure flexible ALLOWED_HOSTS configuration
-allowed_hosts_config = """ALLOWED_HOSTS = [
-    'backend.beautyspabyshea.co.uk',
-    'localhost',
-    '127.0.0.1',
-    '31.97.57.199',  # Server IP
-]"""
-
-# Update ALLOWED_HOSTS
-if 'ALLOWED_HOSTS = ' in content:
-    content = re.sub(
-        r"ALLOWED_HOSTS = \[.*?\]",
-        allowed_hosts_config,
-        content,
-        flags=re.DOTALL
-    )
-else:
-    # Add ALLOWED_HOSTS after DEBUG setting
-    content = re.sub(
-        r"(DEBUG = .*?\n)",
-        r"\1\n" + allowed_hosts_config + "\n",
-        content
-    )
-
-# Ensure CSRF_TRUSTED_ORIGINS is set for HTTPS
-csrf_config = """
-# CSRF Configuration for HTTPS
-CSRF_TRUSTED_ORIGINS = [
-    'https://backend.beautyspabyshea.co.uk',
-    'http://backend.beautyspabyshea.co.uk',
-]
-
-# HTTPS Configuration
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_SSL_REDIRECT = False  # Nginx handles redirects
-"""
-
-# Remove existing CSRF/HTTPS config to avoid duplicates
-content = re.sub(r'\n# CSRF Configuration.*?SECURE_SSL_REDIRECT = False.*?\n', '', content, flags=re.DOTALL)
-
-# Add CSRF/HTTPS configuration
-content += csrf_config
-
-# Write updated settings
-with open('labmyshare/settings.py', 'w') as f:
-    f.write(content)
-
-print("✅ Django settings updated for HTTPS")
-PYTHON_EOF
+          # Update Gunicorn to bind to localhost only (more secure behind Nginx)
+          echo "🌐 Configuring Gunicorn..."
+          cat > $APP_DIR/gunicorn.conf.py << GUNICORN_EOF
+bind = "127.0.0.1:8000"  # Localhost only, behind Nginx
+workers = 4
+worker_class = "sync"
+worker_connections = 1000
+max_requests = 1000
+max_requests_jitter = 100
+timeout = 30
+keepalive = 2
+user = "$USER"
+group = "$USER"
+tmp_upload_dir = None
+errorlog = "$APP_DIR/logs/gunicorn_error.log"
+accesslog = "$APP_DIR/logs/gunicorn_access.log"
+loglevel = "info"
+GUNICORN_EOF
 
           # Create logs directory
           mkdir -p $APP_DIR/logs
