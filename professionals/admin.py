@@ -3,10 +3,10 @@ from django.contrib import admin
 from .models import Professional, ProfessionalAvailability, ProfessionalDocument, ProfessionalRegion, ProfessionalService, ProfessionalUnavailability
 
 # Register your models here.
-admin.sites.register(Professional)
-admin.sites.register(ProfessionalRegion)
-admin.sites.register(ProfessionalService)
+admin.site.register(Professional)
+admin.site.register(ProfessionalRegion)
+admin.site.register(ProfessionalService)
 
-admin.sites.register(ProfessionalAvailability)
-admin.sites.register(ProfessionalUnavailability)
-admin.sites.register(ProfessionalDocument)
+admin.site.register(ProfessionalAvailability)
+admin.site.register(ProfessionalUnavailability)
+admin.site.register(ProfessionalDocument)

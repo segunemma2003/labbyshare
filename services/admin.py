@@ -3,9 +3,9 @@ from django.contrib import admin
 from .models import AddOn, Category, RegionalPricing, Service, ServiceImage, ServiceReview
 
 # Register your models here.
-admin.sites.register(Category)
-admin.sites.register(Service)
-admin.sites.register(RegionalPricing)
-admin.sites.register(AddOn)
-admin.sites.register(ServiceImage)
-admin.sites.register(ServiceReview)
+admin.site.register(Category)
+admin.site.register(Service)
+admin.site.register(RegionalPricing)
+admin.site.register(AddOn)
+admin.site.register(ServiceImage)
+admin.site.register(ServiceReview)
