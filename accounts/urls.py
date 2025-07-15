@@ -10,8 +10,13 @@ urlpatterns = [
     path('logout/', views.logout, name='logout'),
     path('social-auth/', views.social_auth, name='social_auth'),
     
+    # Email verification endpoints
+    path('verify-email/', views.verify_email, name='verify_email'),
+    path('resend-otp/', views.resend_otp, name='resend_otp'),
+    
     # Password management
     path('forgot-password/', views.forgot_password, name='forgot_password'),
+    path('verify-reset-otp/', views.verify_reset_otp, name='verify_reset_otp'),
     path('reset-password/', views.reset_password, name='reset_password'),
     
     # Region management

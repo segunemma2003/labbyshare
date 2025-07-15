@@ -235,6 +235,7 @@ REST_FRAMEWORK = {
         'user': '2000/hour',
         'login': '10/min',
         'register': '5/min',
+        'otp':'10/hour'
     },
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',

@@ -15,7 +15,7 @@ def send_otp_email(self, email, otp, purpose):
     Send OTP email for verification or password reset
     """
     try:
-        if purpose == 'verification':
+        if purpose == 'email_verification':
             subject = 'Verify Your Email - LabMyShare'
             template = 'emails/email_verification.html'
         else:
@@ -28,38 +28,31 @@ def send_otp_email(self, email, otp, purpose):
             'purpose': purpose
         })
         
+        # Plain text fallback
+        plain_message = f'Your LabMyShare OTP is: {otp}. This code will expire in 10 minutes.'
+        
         send_mail(
             subject=subject,
-            message=f'Your OTP is: {otp}',
+            message=plain_message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
             html_message=html_message,
             fail_silently=False
         )
         
-        logger.info(f"OTP email sent successfully to {email}")
+        logger.info(f"OTP email sent successfully to {email} for {purpose}")
         return True
         
     except Exception as exc:
         logger.error(f"Failed to send OTP email to {email}: {str(exc)}")
         if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (2 ** self.request.retries))
+            # Exponential backoff: 60s, 120s, 240s
+            countdown = 60 * (2 ** self.request.retries)
+            raise self.retry(countdown=countdown, exc=exc)
+        
+        # Send notification to admins about email failure
+        logger.critical(f"Failed to send OTP email after all retries: {email}")
         return False
-
-
-@shared_task
-def cleanup_expired_otps():
-    """
-    Clean up expired OTP verification records
-    """
-    from .models import OTPVerification
-    
-    expired_count = OTPVerification.objects.filter(
-        expires_at__lt=timezone.now()
-    ).delete()[0]
-    
-    logger.info(f"Cleaned up {expired_count} expired OTP records")
-    return expired_count
 
 
 @shared_task
@@ -77,9 +70,11 @@ def send_welcome_email(user_id):
             'region': user.current_region
         })
         
+        plain_message = f'Welcome {user.get_full_name()}! Your LabMyShare account is now active.'
+        
         send_mail(
             subject=subject,
-            message=f'Welcome {user.get_full_name()}!',
+            message=plain_message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[user.email],
             html_message=html_message,
@@ -92,3 +87,18 @@ def send_welcome_email(user_id):
     except Exception as exc:
         logger.error(f"Failed to send welcome email: {str(exc)}")
         return False
+
+
+@shared_task
+def cleanup_expired_otps():
+    """
+    Clean up expired OTP verification records
+    """
+    from .models import OTPVerification
+    
+    expired_count = OTPVerification.objects.filter(
+        expires_at__lt=timezone.now()
+    ).delete()[0]
+    
+    logger.info(f"Cleaned up {expired_count} expired OTP records")
+    return expired_count

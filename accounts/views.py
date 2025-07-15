@@ -36,6 +36,10 @@ class LoginThrottle(AnonRateThrottle):
     scope = 'login'
 
 
+class OTPThrottle(AnonRateThrottle):
+    scope = 'otp'
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([RegisterThrottle])
@@ -63,6 +67,12 @@ def register(request):
         otp = ''.join(random.choices(string.digits, k=6))
         expires_at = timezone.now() + timedelta(minutes=10)
         
+        # Delete any existing OTPs for this email and purpose
+        OTPVerification.objects.filter(
+            email=user.email,
+            purpose='email_verification'
+        ).delete()
+        
         OTPVerification.objects.create(
             email=user.email,
             otp=otp,
@@ -71,7 +81,7 @@ def register(request):
         )
         
         # Send verification email asynchronously
-        send_otp_email.delay(user.email, otp, 'verification')
+        send_otp_email.delay(user.email, otp, 'email_verification')
         
         # Cache user profile
         cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(user.id)
@@ -84,6 +94,182 @@ def register(request):
         }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([OTPThrottle])
+def verify_email(request):
+    """
+    Verify email with OTP after registration
+    """
+    email = request.data.get('email', '').lower()
+    otp = request.data.get('otp', '')
+    
+    if not email or not otp:
+        return Response(
+            {'error': 'Email and OTP are required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        otp_verification = OTPVerification.objects.get(
+            email=email,
+            otp=otp,
+            purpose='email_verification',
+            used=False
+        )
+        
+        if otp_verification.is_expired():
+            return Response(
+                {'error': 'OTP has expired'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get user and mark as verified
+        user = User.objects.get(email=email)
+        user.is_verified = True
+        user.save(update_fields=['is_verified'])
+        
+        # Mark OTP as used
+        otp_verification.used = True
+        otp_verification.save()
+        
+        # Clear user cache
+        cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(user.id)
+        cache.delete(cache_key)
+        
+        # Send welcome email
+        from .tasks import send_welcome_email
+        send_welcome_email.delay(user.id)
+        
+        return Response({
+            'message': 'Email verified successfully',
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_200_OK)
+    
+    except OTPVerification.DoesNotExist:
+        return Response(
+            {'error': 'Invalid OTP'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except User.DoesNotExist:
+        return Response(
+            {'error': 'User not found'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([OTPThrottle])
+def resend_otp(request):
+    """
+    Resend OTP for email verification or password reset
+    """
+    email = request.data.get('email', '').lower()
+    purpose = request.data.get('purpose', '')  # 'email_verification' or 'password_reset'
+    
+    if not email or not purpose:
+        return Response(
+            {'error': 'Email and purpose are required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    if purpose not in ['email_verification', 'password_reset']:
+        return Response(
+            {'error': 'Invalid purpose. Must be email_verification or password_reset'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Check if user exists
+    if not User.objects.filter(email=email).exists():
+        # Don't reveal if email exists or not for security
+        return Response(
+            {'message': 'If the email exists, OTP has been sent'}, 
+            status=status.HTTP_200_OK
+        )
+    
+    # Check for recent OTP requests (rate limiting)
+    recent_otp = OTPVerification.objects.filter(
+        email=email,
+        purpose=purpose,
+        created_at__gte=timezone.now() - timedelta(minutes=2)
+    ).exists()
+    
+    if recent_otp:
+        return Response(
+            {'error': 'Please wait 2 minutes before requesting another OTP'}, 
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+    
+    # Generate new OTP
+    otp = ''.join(random.choices(string.digits, k=6))
+    expires_at = timezone.now() + timedelta(minutes=10)
+    
+    # Delete existing OTPs for this email and purpose
+    OTPVerification.objects.filter(
+        email=email,
+        purpose=purpose
+    ).delete()
+    
+    # Create new OTP
+    OTPVerification.objects.create(
+        email=email,
+        otp=otp,
+        purpose=purpose,
+        expires_at=expires_at
+    )
+    
+    # Send email asynchronously
+    send_otp_email.delay(email, otp, purpose)
+    
+    return Response(
+        {'message': 'OTP sent successfully'}, 
+        status=status.HTTP_200_OK
+    )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([OTPThrottle])
+def verify_reset_otp(request):
+    """
+    Verify OTP for password reset (without actually resetting password)
+    """
+    email = request.data.get('email', '').lower()
+    otp = request.data.get('otp', '')
+    
+    if not email or not otp:
+        return Response(
+            {'error': 'Email and OTP are required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        otp_verification = OTPVerification.objects.get(
+            email=email,
+            otp=otp,
+            purpose='password_reset',
+            used=False
+        )
+        
+        if otp_verification.is_expired():
+            return Response(
+                {'error': 'OTP has expired'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return Response({
+            'message': 'OTP verified successfully. You can now reset your password.',
+            'verified': True
+        }, status=status.HTTP_200_OK)
+    
+    except OTPVerification.DoesNotExist:
+        return Response(
+            {'error': 'Invalid OTP'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 
 @api_view(['POST'])
@@ -273,6 +459,7 @@ def switch_region(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([OTPThrottle])
 def forgot_password(request):
     """
     Send OTP for password reset
@@ -284,6 +471,19 @@ def forgot_password(request):
         
         try:
             user = User.objects.get(email=email)
+            
+            # Check for recent OTP requests (rate limiting)
+            recent_otp = OTPVerification.objects.filter(
+                email=email,
+                purpose='password_reset',
+                created_at__gte=timezone.now() - timedelta(minutes=2)
+            ).exists()
+            
+            if recent_otp:
+                return Response(
+                    {'error': 'Please wait 2 minutes before requesting another OTP'}, 
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
             
             # Generate OTP
             otp = ''.join(random.choices(string.digits, k=6))

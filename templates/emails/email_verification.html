@@ -1,35 +1,51 @@
-{% extends 'emails/base.html' %} {% block title %}Email Verification -
-LabMyShare{% endblock %} {% block header %}Verify Your Email{% endblock %} {%
-block content %}
-<h2>Welcome to LabMyShare!</h2>
-<p>
-  Thank you for joining our community. To complete your registration, please
-  verify your email address using the code below:
-</p>
-
-<div class="info-box">
-  <h3
-    style="margin: 0; font-size: 24px; text-align: center; letter-spacing: 3px"
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Verify Your Email - LabMyShare</title>
+  </head>
+  <body
+    style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto"
   >
-    {{ otp }}
-  </h3>
-</div>
+    <div style="background-color: #f8f9fa; padding: 20px; text-align: center">
+      <h1 style="color: #333">Welcome to LabMyShare!</h1>
+    </div>
 
-<p>
-  This verification code will expire in 10 minutes. If you didn't create an
-  account with LabMyShare, please ignore this email.
-</p>
+    <div style="padding: 20px">
+      <h2>Verify Your Email Address</h2>
+      <p>Hello,</p>
+      <p>
+        You requested to reset your password for your LabMyShare account. Please
+        use the following OTP to proceed:
+      </p>
 
-<p>Once verified, you'll be able to:</p>
-<ul>
-  <li>Book professional services in your area</li>
-  <li>Manage your appointments</li>
-  <li>Leave reviews and ratings</li>
-  <li>Save your favorite professionals</li>
-</ul>
+      <div
+        style="
+          background-color: #dc3545;
+          color: white;
+          padding: 15px;
+          text-align: center;
+          font-size: 24px;
+          font-weight: bold;
+          margin: 20px 0;
+          border-radius: 5px;
+        "
+      >
+        {{ otp }}
+      </div>
 
-<p>
-  Need help? Contact our support team at
-  <a href="mailto:support@labmyshare.com">support@labmyshare.com</a>
-</p>
-{% endblock %}
+      <p><strong>This OTP will expire in 10 minutes.</strong></p>
+
+      <p>
+        If you didn't request a password reset, please ignore this email and
+        your password will remain unchanged.
+      </p>
+
+      <hr style="margin: 30px 0" />
+      <p style="color: #666; font-size: 12px">
+        This email was sent to {{ email }}. If you have any questions, please
+        contact our support team.
+      </p>
+    </div>
+  </body>
+</html>

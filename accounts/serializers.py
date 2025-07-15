@@ -220,3 +220,46 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError("Current password is incorrect")
         return value
+    
+    
+class VerifyEmailSerializer(serializers.Serializer):
+    """
+    Email verification serializer
+    """
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6, min_length=6)
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate_otp(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP must contain only digits")
+        return value
+
+
+class ResendOTPSerializer(serializers.Serializer):
+    """
+    Resend OTP serializer
+    """
+    email = serializers.EmailField()
+    purpose = serializers.ChoiceField(choices=['email_verification', 'password_reset'])
+    
+    def validate_email(self, value):
+        return value.lower()
+
+
+class VerifyResetOTPSerializer(serializers.Serializer):
+    """
+    Verify reset OTP serializer (without password reset)
+    """
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6, min_length=6)
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate_otp(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("OTP must contain only digits")
+        return value
