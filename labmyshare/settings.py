@@ -19,7 +19,7 @@ IS_PRODUCTION = not DEBUG or os.environ.get('ENVIRONMENT') == 'production'
 IS_LOCAL = not IS_PRODUCTION
 
 # Flexible host configuration
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 if IS_PRODUCTION:
     ALLOWED_HOSTS = [
         'backend.beautyspabyshea.co.uk',
@@ -266,13 +266,14 @@ if IS_LOCAL:
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_CREDENTIALS = True
 else:
-    CORS_ALLOWED_ORIGINS = [
-        "https://backend.beautyspabyshea.co.uk",
-        "http://backend.beautyspabyshea.co.uk",
-        "https://app.labmyshare.com",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
+    CORS_ALLOW_ALL_ORIGINS = True
+    # CORS_ALLOWED_ORIGINS = [
+    #     "https://backend.beautyspabyshea.co.uk",
+    #     "http://backend.beautyspabyshea.co.uk",
+    #     "https://app.labmyshare.com",
+    #     "http://localhost:3000",
+    #     "http://127.0.0.1:3000",
+    # ]
     CORS_ALLOW_CREDENTIALS = True
 
 # HTTPS/SSL Configuration - Only in production
