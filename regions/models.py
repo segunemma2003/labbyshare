@@ -11,27 +11,23 @@ class RegionManager(models.Manager):
     def get_active_regions(self):
         """Get all active regions with caching"""
         cache_key = settings.CACHE_KEYS['REGIONS']
-        regions = cache.get(cache_key)
+        regions_data = cache.get(cache_key)
         
-        if regions is None:
-            regions = list(self.filter(is_active=True).values())
-            cache.set(cache_key, regions, settings.CACHE_TIMEOUTS['REGIONS'])
+        if regions_data is None:
+            # Get the actual model objects, don't cache them
+            regions = list(self.filter(is_active=True).order_by('name'))
+            return regions
         
-        return regions
+        # If we have cached data, we need to reconstruct objects from cache
+        # But it's better to just return fresh objects for this method
+        return list(self.filter(is_active=True).order_by('name'))
     
     def get_region_by_code(self, code):
-        """Get region by code with caching"""
-        cache_key = f"region:code:{code}"
-        region = cache.get(cache_key)
-        
-        if region is None:
-            try:
-                region = self.get(code=code, is_active=True)
-                cache.set(cache_key, region, settings.CACHE_TIMEOUTS['REGIONS'])
-            except self.model.DoesNotExist:
-                return None
-        
-        return region
+        """Get region by code - don't cache model objects"""
+        try:
+            return self.get(code=code, is_active=True)
+        except self.model.DoesNotExist:
+            return None
 
 
 class Region(models.Model):
@@ -77,6 +73,7 @@ class Region(models.Model):
         super().save(*args, **kwargs)
         # Clear cache when region is updated
         cache.delete(settings.CACHE_KEYS['REGIONS'])
+        # Clear individual region cache too
         cache.delete(f"region:code:{self.code}")
 
 

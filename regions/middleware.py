@@ -16,13 +16,13 @@ class RegionMiddleware(MiddlewareMixin):
         region_code = self.get_region_code(request)
         
         if region_code:
-            region = self.get_cached_region(region_code)
+            region = self.get_region_from_db(region_code)
             if region:
                 request.region = region
                 return
         
         # Fall back to default region (UK)
-        request.region = self.get_cached_region('UK')
+        request.region = self.get_region_from_db('UK')
     
     def get_region_code(self, request):
         """
@@ -46,18 +46,11 @@ class RegionMiddleware(MiddlewareMixin):
         
         return None
     
-    def get_cached_region(self, code):
+    def get_region_from_db(self, code):
         """
-        Get region from cache or database
+        Get region from database (don't cache model objects)
         """
-        cache_key = f"region:code:{code}"
-        region = cache.get(cache_key)
-        
-        if region is None:
-            try:
-                region = Region.objects.get(code=code, is_active=True)
-                cache.set(cache_key, region, 3600)  # Cache for 1 hour
-            except Region.DoesNotExist:
-                return None
-        
-        return region
+        try:
+            return Region.objects.get(code=code, is_active=True)
+        except Region.DoesNotExist:
+            return None

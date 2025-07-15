@@ -34,11 +34,11 @@ class RegionListView(generics.ListAPIView):
         # If not in cache, get from database
         response = super().list(request, *args, **kwargs)
         
-        # Cache the results
-        if response.status_code == 200:
+        # Cache the serialized results (not the model objects)
+        if response.status_code == 200 and 'results' in response.data:
             cache.set(
                 cache_key, 
-                response.data['results'], 
+                response.data['results'],  # This is already serialized JSON data
                 settings.CACHE_TIMEOUTS['REGIONS']
             )
         
@@ -56,16 +56,27 @@ class RegionDetailView(generics.RetrieveAPIView):
     def get_queryset(self):
         return Region.objects.filter(is_active=True)
     
-    def get_object(self):
+    def retrieve(self, request, *args, **kwargs):
         code = self.kwargs['code'].upper()
         cache_key = f"region:code:{code}"
         
-        region = cache.get(cache_key)
-        if region is None:
-            region = self.get_queryset().get(code=code)
-            cache.set(cache_key, region, settings.CACHE_TIMEOUTS['REGIONS'])
+        # Try to get serialized data from cache
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
         
-        return region
+        # If not in cache, get from database and serialize
+        try:
+            region = self.get_queryset().get(code=code)
+            serializer = self.get_serializer(region)
+            serialized_data = serializer.data
+            
+            # Cache the serialized data
+            cache.set(cache_key, serialized_data, settings.CACHE_TIMEOUTS['REGIONS'])
+            
+            return Response(serialized_data)
+        except Region.DoesNotExist:
+            return Response({'error': 'Region not found'}, status=404)
 
 
 class RegionSettingsView(generics.ListAPIView):
