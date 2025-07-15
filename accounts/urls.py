@@ -14,7 +14,10 @@ urlpatterns = [
     path('forgot-password/', views.forgot_password, name='forgot_password'),
     path('reset-password/', views.reset_password, name='reset_password'),
     
+    # Region management
+    path('switch-region/', views.switch_region, name='switch_region'),
+    
     # Profile management
     path('profile/update/', views.ProfileUpdateView.as_view(), name='profile_update'),
-    path('switch-region/', views.switch_region, name='switch_region'),
+    path('profile/image/', views.ProfileImageUpdateView.as_view(), name='profile_image_update'),
 ]

@@ -17,19 +17,16 @@ class RegionSerializer(serializers.ModelSerializer):
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     """
-    User registration with email, password, name and region
+    User registration with email, password, and name (region optional)
     """
     password = serializers.CharField(write_only=True, validators=[validate_password])
     confirm_password = serializers.CharField(write_only=True)
-    current_region = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.filter(is_active=True)
-    )
     
     class Meta:
         model = User
         fields = [
             'first_name', 'last_name', 'email', 
-            'password', 'confirm_password', 'current_region'
+            'password', 'confirm_password'
         ]
     
     def validate_email(self, value):
@@ -47,7 +44,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create new user"""
         validated_data.pop('confirm_password')
-        region = validated_data.pop('current_region')
         
         # Create username from email
         email = validated_data['email']
@@ -64,8 +60,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             username=username,
             **validated_data
         )
-        user.current_region = region
-        user.save()
         return user
 
 
@@ -82,13 +76,10 @@ class UserLoginSerializer(serializers.Serializer):
 
 class SocialAuthSerializer(serializers.Serializer):
     """
-    Social authentication (Google/Apple) via Firebase
+    Social authentication (Google/Apple) via Firebase (region optional)
     """
     firebase_token = serializers.CharField()
     provider = serializers.ChoiceField(choices=['google', 'apple'])
-    current_region = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.filter(is_active=True)
-    )
     
     def validate_firebase_token(self, value):
         """Validate Firebase token"""
@@ -99,15 +90,53 @@ class SocialAuthSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid Firebase token")
 
 
+class RegionSelectionSerializer(serializers.Serializer):
+    """
+    Region selection/update serializer
+    """
+    region_code = serializers.CharField(max_length=10)
+    
+    def validate_region_code(self, value):
+        """Validate region exists and is active"""
+        try:
+            region = Region.objects.get(code=value.upper(), is_active=True)
+            return region
+        except Region.DoesNotExist:
+            raise serializers.ValidationError("Invalid or inactive region code")
+
+
+class ProfileImageUpdateSerializer(serializers.ModelSerializer):
+    """
+    Update user profile image only
+    """
+    class Meta:
+        model = User
+        fields = ['profile_picture']
+    
+    def validate_profile_picture(self, value):
+        """Validate image file"""
+        if value:
+            # Check file size (5MB limit)
+            if value.size > 5 * 1024 * 1024:
+                raise serializers.ValidationError("Image file too large. Maximum size is 5MB.")
+            
+            # Check file type
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+            if hasattr(value, 'content_type') and value.content_type not in allowed_types:
+                raise serializers.ValidationError("Unsupported image format. Use JPEG, PNG, or WebP.")
+        
+        return value
+
+
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """
-    Update user profile information
+    Update user profile information (excluding profile picture)
     """
     class Meta:
         model = User
         fields = [
             'first_name', 'last_name', 'phone_number', 
-            'profile_picture', 'date_of_birth', 'gender'
+            'date_of_birth', 'gender'
         ]
     
     def update(self, instance, validated_data):

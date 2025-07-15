@@ -17,6 +17,8 @@ from .serializers import (
     UserRegistrationSerializer, 
     UserLoginSerializer, 
     SocialAuthSerializer,
+    RegionSelectionSerializer,
+    ProfileImageUpdateSerializer,
     ProfileUpdateSerializer,
     UserSerializer,
     ForgotPasswordSerializer,
@@ -39,7 +41,7 @@ class LoginThrottle(AnonRateThrottle):
 @throttle_classes([RegisterThrottle])
 def register(request):
     """
-    Register new user with email, password, and region selection
+    Register new user with email, password, and name (region not required)
     """
     serializer = UserRegistrationSerializer(data=request.data)
     
@@ -100,18 +102,6 @@ def login(request):
         user = authenticate(username=email, password=password)
         
         if user and user.is_active:
-            # Update last login region if provided
-            region_code = request.data.get('region_code')
-            if region_code:
-                try:
-                    region = Region.objects.get(code=region_code.upper(), is_active=True)
-                    user.last_login_region = region
-                    if not user.current_region:
-                        user.current_region = region
-                    user.save(update_fields=['last_login_region', 'current_region'])
-                except Region.DoesNotExist:
-                    pass
-            
             # Get or create token
             token, created = Token.objects.get_or_create(user=user)
             
@@ -137,14 +127,13 @@ def login(request):
 @throttle_classes([RegisterThrottle])
 def social_auth(request):
     """
-    Social authentication with Google/Apple via Firebase
+    Social authentication with Google/Apple via Firebase (region not required)
     """
     serializer = SocialAuthSerializer(data=request.data)
     
     if serializer.is_valid():
         firebase_token = serializer.validated_data['firebase_token']
         provider = serializer.validated_data['provider']
-        current_region = serializer.validated_data['current_region']
         
         try:
             # The token is already verified in the serializer
@@ -167,6 +156,7 @@ def social_auth(request):
             
             # Check if user exists
             user = None
+            is_new_user = False
             try:
                 if provider == 'google':
                     user = User.objects.get(google_id=firebase_uid)
@@ -176,13 +166,13 @@ def social_auth(request):
                     user = User.objects.get(email=email)
             except User.DoesNotExist:
                 # Create new user
+                is_new_user = True
                 username = email.split('@')[0] + '_' + ''.join(random.choices(string.digits, k=4))
                 user = User.objects.create_user(
                     username=username,
                     email=email,
                     first_name=first_name,
                     last_name=last_name,
-                    current_region=current_region,
                     firebase_uid=firebase_uid,
                     is_verified=True  # Social auth users are pre-verified
                 )
@@ -210,7 +200,7 @@ def social_auth(request):
             return Response({
                 'token': token.key,
                 'user': UserSerializer(user).data,
-                'is_new_user': created
+                'is_new_user': is_new_user
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -245,6 +235,40 @@ def logout(request):
             {'error': 'Error logging out'}, 
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def switch_region(request):
+    """
+    Select or update user's current region
+    """
+    serializer = RegionSelectionSerializer(data=request.data)
+    
+    if serializer.is_valid():
+        region = serializer.validated_data['region_code']
+        
+        # Update user's current region
+        request.user.current_region = region
+        request.user.save(update_fields=['current_region'])
+        
+        # Clear user cache
+        cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(request.user.id)
+        cache.delete(cache_key)
+        
+        return Response({
+            'message': f'Region updated to {region.name}',
+            'region': {
+                'id': region.id,
+                'code': region.code,
+                'name': region.name,
+                'currency': region.currency,
+                'currency_symbol': region.currency_symbol,
+                'timezone': region.timezone
+            }
+        }, status=status.HTTP_200_OK)
+    
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -359,51 +383,9 @@ def reset_password(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def switch_region(request):
-    """
-    Switch user's current region
-    """
-    region_code = request.data.get('region_code', '').upper()
-    
-    if not region_code:
-        return Response(
-            {'error': 'Region code is required'}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    try:
-        region = Region.objects.get(code=region_code, is_active=True)
-        
-        # Update user's current region
-        request.user.current_region = region
-        request.user.save(update_fields=['current_region'])
-        
-        # Clear user cache
-        cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(request.user.id)
-        cache.delete(cache_key)
-        
-        return Response({
-            'message': f'Switched to {region.name}',
-            'region': {
-                'code': region.code,
-                'name': region.name,
-                'currency': region.currency,
-                'timezone': region.timezone
-            }
-        }, status=status.HTTP_200_OK)
-    
-    except Region.DoesNotExist:
-        return Response(
-            {'error': 'Invalid region code'}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
 class ProfileUpdateView(generics.UpdateAPIView):
     """
-    Update user profile
+    Update user profile (excluding profile picture)
     """
     serializer_class = ProfileUpdateSerializer
     permission_classes = [IsAuthenticated]
@@ -417,3 +399,36 @@ class ProfileUpdateView(generics.UpdateAPIView):
         # Clear user cache
         cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(self.request.user.id)
         cache.delete(cache_key)
+
+
+class ProfileImageUpdateView(generics.UpdateAPIView):
+    """
+    Update user profile image only
+    """
+    serializer_class = ProfileImageUpdateSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self):
+        return self.request.user
+    
+    def perform_update(self, serializer):
+        serializer.save()
+        
+        # Clear user cache
+        cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(self.request.user.id)
+        cache.delete(cache_key)
+    
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+        
+        return Response({
+            'message': 'Profile image updated successfully',
+            'profile_picture': instance.profile_picture.url if instance.profile_picture else None
+        }, status=status.HTTP_200_OK)
