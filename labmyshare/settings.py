@@ -186,7 +186,7 @@ CACHES = {
                 'retry_on_timeout': True,
                 'health_check_interval': 60,
             },
-            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+            'SERIALIZER': 'django_redis.serializers.pickle.PickleSerializer',
             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
         },
         'KEY_PREFIX': 'labmyshare',
