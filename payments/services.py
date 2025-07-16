@@ -20,33 +20,26 @@ class StripePaymentService:
     
     @staticmethod
     def create_customer(user) -> stripe.Customer:
-        """Create or get Stripe customer"""
+        """
+        Create Stripe customer (don't store ID on user model)
+        """
         try:
-            # Check if user already has a Stripe customer ID
-            if hasattr(user, 'stripe_customer_id') and user.stripe_customer_id:
-                try:
-                    return stripe.Customer.retrieve(user.stripe_customer_id)
-                except stripe.error.InvalidRequestError:
-                    # Customer doesn't exist, create new one
-                    pass
-            
-            # Create new Stripe customer
+            # Always create a new customer for each transaction
+            # This ensures no sensitive data is stored on user model
             customer = stripe.Customer.create(
                 email=user.email,
                 name=user.get_full_name(),
                 phone=getattr(user, 'phone', None),
                 metadata={
-                    'user_id': user.id,
-                    'user_type': getattr(user, 'user_type', 'customer')
+                    'user_id': str(user.id),
+                    'user_type': getattr(user, 'user_type', 'customer'),
+                    'region': getattr(user, 'region', 'UK')
                 }
             )
             
-            # Save customer ID to user
-            user.stripe_customer_id = customer.id
-            user.save(update_fields=['stripe_customer_id'])
-            
             logger.info(f"Created Stripe customer {customer.id} for user {user.id}")
             return customer
+            
         except stripe.error.StripeError as e:
             logger.error(f"Failed to create Stripe customer for user {user.id}: {str(e)}")
             raise e
@@ -64,8 +57,8 @@ class StripePaymentService:
         
         Args:
             booking: The booking instance
-            amount: Amount to charge (either full amount or deposit)
-            payment_type: 'full', 'deposit', or 'remaining'
+            amount: Amount to charge (calculated server-side)
+            payment_type: 'full' or 'partial'
             customer_id: Stripe customer ID
             payment_method_id: Stripe payment method ID (optional)
             
@@ -79,6 +72,29 @@ class StripePaymentService:
             # Get currency for region
             currency = StripePaymentService._get_currency_for_region(booking.region)
             
+            # Create payment intent metadata with server-calculated values
+            intent_metadata = {
+                'booking_id': str(booking.booking_id),
+                'customer_id': str(booking.customer.id),
+                'professional_id': str(booking.professional.id),
+                'service_id': str(booking.service.id),
+                'region_id': str(booking.region.id),
+                'payment_type': payment_type,
+                
+                # Server-calculated amounts (for verification)
+                'base_amount': str(booking.base_amount),
+                'addon_amount': str(booking.addon_amount),
+                'tax_amount': str(booking.tax_amount),
+                'discount_amount': str(booking.discount_amount),
+                'total_amount': str(booking.total_amount),
+                'deposit_amount': str(booking.deposit_amount),
+                'deposit_percentage': str(booking.deposit_percentage),
+                'amount_being_charged': str(amount),
+                
+                # Verification hash (to prevent tampering)
+                'verification_hash': StripePaymentService._generate_verification_hash(booking, amount)
+            }
+            
             # Create payment intent data
             intent_data = {
                 'amount': amount_cents,
@@ -86,19 +102,7 @@ class StripePaymentService:
                 'automatic_payment_methods': {
                     'enabled': True,
                 },
-                'metadata': {
-                    'booking_id': str(booking.booking_id),
-                    'customer_id': booking.customer.id,
-                    'professional_id': booking.professional.id,
-                    'service_id': booking.service.id,
-                    'payment_type': payment_type,
-                    'total_amount': str(booking.total_amount),
-                    'deposit_amount': str(booking.deposit_amount),
-                    'base_amount': str(booking.base_amount),
-                    'addon_amount': str(booking.addon_amount),
-                    'tax_amount': str(booking.tax_amount),
-                    'discount_amount': str(booking.discount_amount),
-                }
+                'metadata': intent_metadata
             }
             
             # Add customer if provided
@@ -114,13 +118,9 @@ class StripePaymentService:
             # Set description based on payment type
             service_name = booking.service.name
             if payment_type == 'full':
-                intent_data['description'] = f"Full payment for {service_name} booking"
-            elif payment_type == 'deposit':
-                intent_data['description'] = f"Deposit payment for {service_name} booking"
-            elif payment_type == 'remaining':
-                intent_data['description'] = f"Remaining payment for {service_name} booking"
+                intent_data['description'] = f"Full payment for {service_name} - {booking.scheduled_date}"
             else:
-                intent_data['description'] = f"Payment for {service_name} booking"
+                intent_data['description'] = f"Partial payment (50%) for {service_name} - {booking.scheduled_date}"
             
             # Create the payment intent
             payment_intent = stripe.PaymentIntent.create(**intent_data)
@@ -141,13 +141,12 @@ class StripePaymentService:
                 metadata={
                     'stripe_client_secret': payment_intent.client_secret,
                     'payment_type': payment_type,
-                    'total_booking_amount': str(booking.total_amount),
-                    'deposit_amount': str(booking.deposit_amount),
-                    'amount_charged': str(amount),
+                    'server_calculated_amount': str(amount),
+                    'verification_hash': intent_metadata['verification_hash']
                 }
             )
             
-            logger.info(f"Created payment intent {payment_intent.id} for booking {booking.booking_id}")
+            logger.info(f"Created payment intent {payment_intent.id} for booking {booking.booking_id} - Amount: {amount} {currency}")
             return payment_intent, payment
             
         except stripe.error.StripeError as e:
@@ -156,6 +155,13 @@ class StripePaymentService:
         except Exception as e:
             logger.error(f"Error creating payment intent: {str(e)}")
             raise e
+        
+    @staticmethod
+    def _generate_verification_hash(booking, amount):
+        """Generate verification hash to prevent payment tampering"""
+        import hashlib
+        data = f"{booking.booking_id}:{amount}:{booking.total_amount}:{booking.deposit_amount}"
+        return hashlib.sha256(data.encode()).hexdigest()[:16]
     
     @staticmethod
     def confirm_payment_intent(payment_intent_id: str, payment_method_id: str = None) -> stripe.PaymentIntent:
@@ -190,12 +196,6 @@ class StripePaymentService:
     def handle_payment_success(payment_intent_id: str) -> Dict:
         """
         Handle successful payment and update booking status
-        
-        Args:
-            payment_intent_id: Stripe payment intent ID
-            
-        Returns:
-            Dict with payment confirmation details
         """
         try:
             # Retrieve the payment intent
@@ -204,6 +204,14 @@ class StripePaymentService:
             # Find the payment record
             payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
             booking = payment.booking
+            
+            # Verify payment amount matches server calculation
+            server_amount = Decimal(payment_intent.metadata.get('amount_being_charged', '0'))
+            stripe_amount = Decimal(payment_intent.amount) / 100
+            
+            if abs(server_amount - stripe_amount) > Decimal('0.01'):
+                logger.error(f"Payment amount mismatch for {payment_intent_id}: server={server_amount}, stripe={stripe_amount}")
+                raise ValueError("Payment amount verification failed")
             
             # Update payment status
             payment.status = 'completed'
@@ -214,10 +222,8 @@ class StripePaymentService:
             # Update booking payment status based on payment type
             if payment.payment_type == 'full':
                 booking.payment_status = 'fully_paid'
-            elif payment.payment_type == 'deposit':
+            else:  # partial payment
                 booking.payment_status = 'deposit_paid'
-            elif payment.payment_type == 'remaining':
-                booking.payment_status = 'fully_paid'
             
             booking.save()
             
@@ -232,10 +238,10 @@ class StripePaymentService:
             except Exception as e:
                 logger.error(f"Failed to send payment confirmation notification: {str(e)}")
             
-            logger.info(f"Payment confirmed for booking {booking.booking_id}")
+            logger.info(f"Payment confirmed for booking {booking.booking_id} - Type: {payment.payment_type}")
             return {
                 'success': True,
-                'payment_id': payment.id,
+                'payment_id': str(payment.payment_id),
                 'booking_id': str(booking.booking_id),
                 'payment_type': payment.payment_type,
                 'amount': str(payment.amount),
@@ -306,40 +312,36 @@ class StripePaymentService:
             return {'success': False, 'error': str(e)}
     
     @staticmethod
-    def process_remaining_payment(booking_id: str, customer_id: str = None) -> Tuple[stripe.PaymentIntent, Payment]:
+    def process_remaining_payment(booking_id: str) -> Tuple[stripe.PaymentIntent, Payment]:
         """
-        Process remaining payment for a booking that had deposit paid
-        
-        Args:
-            booking_id: The booking ID
-            customer_id: Stripe customer ID
-            
-        Returns:
-            Tuple of (PaymentIntent, Payment record)
+        Process remaining payment for a booking that had partial payment
         """
         try:
             from bookings.models import Booking
             booking = Booking.objects.get(booking_id=booking_id)
             
-            # Check if booking has deposit paid
+            # Check if booking has partial payment completed
             if booking.payment_status != 'deposit_paid':
-                raise ValueError("Booking must have deposit paid to process remaining payment")
+                raise ValueError("Booking must have partial payment completed to process remaining payment")
             
-            # Calculate remaining amount
+            # Calculate remaining amount (SERVER-SIDE CALCULATION)
             remaining_amount = booking.total_amount - booking.deposit_amount
             
             if remaining_amount <= 0:
                 raise ValueError("No remaining amount to pay")
+            
+            # Create new Stripe customer for this transaction
+            customer = StripePaymentService.create_customer(booking.customer)
             
             # Create payment intent for remaining amount
             payment_intent, payment = StripePaymentService.create_payment_intent(
                 booking=booking,
                 amount=remaining_amount,
                 payment_type='remaining',
-                customer_id=customer_id
+                customer_id=customer.id
             )
             
-            logger.info(f"Created remaining payment intent for booking {booking.booking_id}")
+            logger.info(f"Created remaining payment intent for booking {booking.booking_id} - Amount: {remaining_amount}")
             return payment_intent, payment
             
         except Exception as e:

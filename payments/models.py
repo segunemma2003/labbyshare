@@ -33,12 +33,12 @@ class PaymentManager(models.Manager):
 
 class Payment(models.Model):
     """
-    Enhanced payment model supporting full and deposit payments
+    Enhanced payment model with server-side calculation support
     """
     PAYMENT_TYPE_CHOICES = [
-        ('full', 'Full Payment'),
-        ('deposit', 'Deposit Payment'),
-        ('remaining', 'Remaining Payment'),
+        ('full', 'Full Payment (100%)'),
+        ('partial', 'Partial Payment (50%)'),
+        ('remaining', 'Remaining Payment (50%)'),
         ('refund', 'Refund'),
     ]
     
@@ -53,7 +53,6 @@ class Payment(models.Model):
         ('pending', 'Pending'),
         ('processing', 'Processing'),
         ('completed', 'Completed'),
-        ('succeeded', 'Succeeded'),  # Keep for backward compatibility
         ('failed', 'Failed'),
         ('cancelled', 'Cancelled'),
         ('refunded', 'Refunded'),
@@ -80,11 +79,12 @@ class Payment(models.Model):
         related_name='payments'
     )
     
-    # Payment details
+    # Payment details (server-calculated)
     amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.01'))]
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text="Server-calculated payment amount"
     )
     currency = models.CharField(
         max_length=3,
@@ -99,7 +99,7 @@ class Payment(models.Model):
     payment_type = models.CharField(
         max_length=20,
         choices=PAYMENT_TYPE_CHOICES,
-        default='deposit'
+        default='partial'
     )
     status = models.CharField(
         max_length=20,
@@ -112,10 +112,15 @@ class Payment(models.Model):
     description = models.TextField(blank=True)
     failure_reason = models.TextField(blank=True)
     
-    # Stripe-specific fields
+    # Stripe-specific fields (don't store customer_id on user model)
     stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True, null=True)
-    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
+    stripe_customer_id = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        help_text="Stripe customer ID for this transaction only (not stored on user model)"
+    )
     payment_method_id = models.CharField(max_length=255, blank=True, null=True)
     
     # Refund tracking
@@ -127,8 +132,12 @@ class Payment(models.Model):
     refund_reason = models.TextField(blank=True)
     refunded_at = models.DateTimeField(null=True, blank=True)
     
-    # Metadata for storing additional payment details
-    metadata = models.JSONField(default=dict, blank=True)
+    # Metadata for storing server-calculated values and verification
+    metadata = models.JSONField(
+        default=dict, 
+        blank=True,
+        help_text="Server-calculated values and verification data"
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -144,16 +153,32 @@ class Payment(models.Model):
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['stripe_payment_intent_id']),
             models.Index(fields=['created_at', 'currency']),
+            models.Index(fields=['payment_type', 'status']),
         ]
         ordering = ['-created_at']
     
     def __str__(self):
-        return f"Payment {self.payment_id} - {self.payment_type} - {self.amount} {self.currency.upper()}"
+        return f"Payment {self.payment_id} - {self.get_payment_type_display()} - {self.amount} {self.currency.upper()}"
     
     @property
     def is_successful(self):
         """Check if payment was successful"""
-        return self.status in ['completed', 'succeeded']
+        return self.status == 'completed'
+    
+    @property
+    def is_partial_payment(self):
+        """Check if this is a partial payment (50%)"""
+        return self.payment_type == 'partial'
+    
+    @property
+    def is_full_payment(self):
+        """Check if this is a full payment (100%)"""
+        return self.payment_type == 'full'
+    
+    @property
+    def is_remaining_payment(self):
+        """Check if this is a remaining payment (50%)"""
+        return self.payment_type == 'remaining'
     
     @property
     def is_refunded(self):
@@ -165,11 +190,6 @@ class Payment(models.Model):
         """Check if payment can be refunded"""
         return self.is_successful and self.stripe_charge_id and self.payment_type != 'refund'
     
-    @property
-    def is_refundable(self):
-        """Backward compatibility property"""
-        return self.can_be_refunded
-    
     def get_refund_amount(self):
         """Get available refund amount"""
         if not self.can_be_refunded:
@@ -177,15 +197,22 @@ class Payment(models.Model):
         
         return self.amount - self.refund_amount
     
-    def get_refundable_amount(self):
-        """Backward compatibility method"""
-        return self.get_refund_amount()
+    def verify_server_calculation(self):
+        """Verify payment amount matches server calculation"""
+        if not self.metadata.get('server_calculated_amount'):
+            return False
+        
+        server_amount = Decimal(self.metadata['server_calculated_amount'])
+        return abs(self.amount - server_amount) < Decimal('0.01')
     
     def save(self, *args, **kwargs):
-        # Ensure 'succeeded' status is mapped to 'completed' for consistency
-        if self.status == 'succeeded':
-            self.status = 'completed'
+        # Ensure metadata contains server calculation flag
+        if not self.metadata.get('server_calculated'):
+            self.metadata['server_calculated'] = True
+            self.metadata['calculated_at'] = timezone.now().isoformat()
+        
         super().save(*args, **kwargs)
+
 
 
 class SavedPaymentMethod(models.Model):
