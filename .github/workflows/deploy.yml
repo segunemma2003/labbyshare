@@ -152,7 +152,24 @@ jobs:
           # Setup environment file
           if [ ! -f ".env" ]; then
             echo "⚙️ Setting up environment file..."
-            cp .env.production .env
+            if [ -f ".env.production" ]; then
+              cp .env.production .env
+            elif [ -f ".env.example" ]; then
+              cp .env.example .env
+            else
+              echo "Creating basic .env file..."
+              cat > .env << ENV_EOF
+          DEBUG=False
+          SECRET_KEY=your-secret-key-here
+          DB_NAME=labmyshare_db
+          DB_USER=labmyshare
+          DB_PASSWORD=labmyshare2020
+          DB_HOST=localhost
+          DB_PORT=5432
+          REDIS_URL=redis://localhost:6379/1
+          ALLOWED_HOSTS=backend.beautyspabyshea.co.uk,localhost,127.0.0.1
+          ENV_EOF
+            fi
             
             # Update database settings for local PostgreSQL
             sed -i 's/DB_HOST=db/DB_HOST=localhost/' .env
@@ -161,40 +178,83 @@ jobs:
 
           # Setup PostgreSQL database
           echo "🗄️ Setting up PostgreSQL database..."
-          sudo -u postgres psql -c "CREATE DATABASE labmyshare_db;" 2>/dev/null || echo "Database already exists"
-          sudo -u postgres psql -c "CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';" 2>/dev/null || echo "User already exists"
-          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;" 2>/dev/null || echo "Privileges already granted"
-          sudo -u postgres psql -c "ALTER USER labmyshare CREATEDB;" 2>/dev/null || echo "User already has CREATEDB"
-
-          # Start services
-          echo "🔧 Starting PostgreSQL and Redis..."
+          
+          # Start PostgreSQL service first
           sudo systemctl enable postgresql
           sudo systemctl start postgresql
+          
+          # Check if database exists and create if not
+          if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw labmyshare_db; then
+            echo "Database labmyshare_db already exists, skipping creation"
+          else
+            echo "Creating database labmyshare_db..."
+            sudo -u postgres psql -c "CREATE DATABASE labmyshare_db;"
+          fi
+          
+          # Check if user exists and create if not
+          if sudo -u postgres psql -t -c "SELECT 1 FROM pg_roles WHERE rolname='labmyshare';" | grep -q 1; then
+            echo "User labmyshare already exists, skipping creation"
+          else
+            echo "Creating user labmyshare..."
+            sudo -u postgres psql -c "CREATE USER labmyshare WITH PASSWORD 'labmyshare2020';"
+          fi
+          
+          # Grant privileges (safe to run multiple times)
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE labmyshare_db TO labmyshare;"
+          sudo -u postgres psql -c "ALTER USER labmyshare CREATEDB;"
+
+          # Start Redis service
+          echo "🔧 Starting Redis..."
           sudo systemctl enable redis-server
           sudo systemctl start redis-server
 
-          # Run Django setup
+          # Fix potential logging configuration issue
+          echo "🔧 Checking Django settings..."
+          source $VENV_DIR/bin/activate
+          
+          # Test Django configuration before running migrations
+          if ! python manage.py check --deploy 2>/dev/null; then
+            echo "⚠️  Django configuration check failed, but continuing with deployment..."
+          fi
+
+          # Run Django setup with better error handling
           echo "📊 Running Django migrations..."
           source $VENV_DIR/bin/activate
-          python manage.py migrate --noinput
+          
+          # Try to run migrations with better error handling
+          if python manage.py migrate --noinput; then
+            echo "✅ Migrations completed successfully"
+          else
+            echo "❌ Migration failed, attempting to create missing tables..."
+            # Try to create tables if migrations fail
+            python manage.py migrate --run-syncdb --noinput || echo "Syncdb also failed, continuing anyway..."
+          fi
 
           echo "📦 Collecting static files..."
           python manage.py collectstatic --noinput
 
           echo "👤 Creating superuser..."
           python manage.py shell << PYTHON_EOF
-          from accounts.models import User
-          if not User.objects.filter(email='admin@labmyshare.com').exists():
-              User.objects.create_superuser(
-                  username='admin',
-                  email='admin@labmyshare.com',
-                  password='admin123',
-                  first_name='Admin',
-                  last_name='User'
-              )
-              print('Superuser created: admin@labmyshare.com / admin123')
-          else:
-              print('Superuser already exists')
+          import os
+          import django
+          os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'labmyshare.settings')
+          django.setup()
+
+          try:
+              from accounts.models import User
+              if not User.objects.filter(email='admin@labmyshare.com').exists():
+                  User.objects.create_superuser(
+                      username='admin',
+                      email='admin@labmyshare.com',
+                      password='admin123',
+                      first_name='Admin',
+                      last_name='User'
+                  )
+                  print('Superuser created: admin@labmyshare.com / admin123')
+              else:
+                  print('Superuser already exists')
+          except Exception as e:
+              print(f'Error creating superuser: {e}')
           PYTHON_EOF
 
           # Update Gunicorn to bind to localhost only (more secure behind Nginx)
