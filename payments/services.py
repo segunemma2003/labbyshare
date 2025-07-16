@@ -4,10 +4,18 @@ from django.utils import timezone
 from decimal import Decimal
 from typing import Dict, Optional, Tuple
 import logging
+import os
 
 from .models import Payment, SavedPaymentMethod, PaymentWebhookEvent, PaymentRefund
 
 logger = logging.getLogger(__name__)
+
+# Debug: Print a masked version of the Stripe secret key
+key = os.environ.get('STRIPE_SECRET_KEY') or getattr(settings, 'STRIPE_SECRET_KEY', None)
+if key:
+    print(f"STRIPE_SECRET_KEY loaded: {key[:6]}...{key[-4:]}")
+else:
+    print("STRIPE_SECRET_KEY is NOT set!")
 
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
