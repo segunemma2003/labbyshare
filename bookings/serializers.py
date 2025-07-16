@@ -106,6 +106,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
+            'booking_id',  # <-- Add this field to the output
             'professional', 'service', 'scheduled_date', 'scheduled_time',
             'booking_for_self', 'recipient_name', 'recipient_phone', 'recipient_email',
             'address_line1', 'address_line2', 'city', 'postal_code', 'location_notes',
