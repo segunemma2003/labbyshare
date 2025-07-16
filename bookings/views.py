@@ -7,6 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from django.utils import timezone
 
 from .models import Booking, Review, BookingReschedule, BookingMessage
 from .serializers import (
@@ -76,16 +77,39 @@ class BookingCreateView(generics.CreateAPIView):
         responses={201: BookingDetailSerializer()}
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
-    
+        response = super().post(request, *args, **kwargs)
+        # If booking was created, create Stripe payment intent and return its ID
+        if response.status_code == 201:
+            booking_id = response.data.get('booking_id')
+            from bookings.models import Booking
+            booking = Booking.objects.get(booking_id=booking_id)
+            from payments.services import StripePaymentService
+            # Create payment intent for full amount (or deposit if required)
+            payment_type = 'deposit' if booking.deposit_required else 'full'
+            customer_id = None
+            if hasattr(request.user, 'stripe_customer_id') and request.user.stripe_customer_id:
+                customer_id = request.user.stripe_customer_id
+            else:
+                # Create Stripe customer if not exists
+                customer = StripePaymentService.create_customer(request.user)
+                customer_id = customer.id
+            payment_intent, payment = StripePaymentService.create_payment_intent(
+                booking=booking,
+                payment_type=payment_type,
+                customer_id=customer_id
+            )
+            # Add payment intent and charge ID to response
+            response.data['stripe_payment_intent_id'] = payment_intent.id
+            response.data['stripe_charge_id'] = getattr(payment, 'stripe_charge_id', None)
+        return response
+
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['region'] = getattr(self.request, 'region', None)
         return context
-    
+
     def perform_create(self, serializer):
         booking = serializer.save()
-        
         # Send notifications
         from apps.notifications.tasks import send_booking_notification
         send_booking_notification.delay(
