@@ -373,36 +373,36 @@ LOGGING = {
             'formatter': 'simple'
         },
     },
-    # 'root': {
-    #     'handlers': ['console'],
-    # },
-    # 'loggers': {
-    #     'django': {
-    #         'handlers': ['console'],
-    #         'level': 'DEBUG' if IS_LOCAL else 'INFO',
-    #         'propagate': False,
-    #     },
-    #     'django.db.backends': {
-    #         'handlers': ['console'],
-    #         'level': 'DEBUG' if IS_LOCAL else 'INFO',
-    #         'propagate': False,
-    #     },
-    #     'accounts': {
-    #         'handlers': ['console'],
-    #         'level': 'INFO',
-    #         'propagate': False,
-    #     },
-    #     'payments': {
-    #         'handlers': ['console'],
-    #         'level': 'INFO',
-    #         'propagate': False,
-    #     },
-    #     'notifications': {
-    #         'handlers': ['console'],
-    #         'level': 'INFO',
-    #         'propagate': False,
-    #     },
-    # },
+    'root': {
+        'handlers': ['console'],
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if IS_LOCAL else 'INFO',
+            'propagate': False,
+        },
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if IS_LOCAL else 'INFO',
+            'propagate': False,
+        },
+        'accounts': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'payments': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'notifications': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
 }
 
 # Add file logging only in production
