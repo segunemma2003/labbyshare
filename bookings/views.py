@@ -12,7 +12,7 @@ from decimal import Decimal
 import logging
 from django.conf import settings
 from django.db import transaction
-from payment.services import StripePaymentService
+from payments.services import StripePaymentService
 
 from .models import Booking, Review, BookingReschedule, BookingMessage
 from .serializers import (
