@@ -341,18 +341,18 @@ class DocumentUploadView(generics.ListCreateAPIView):
 def get_available_slots(request):
     """
     Get available time slots for a professional on a specific date, or for a date range if start_date and end_date are provided.
+    Slots are generated every 30 minutes within the available range, regardless of service duration.
     """
     professional_id = request.GET.get('professional_id')
     service_id = request.GET.get('service_id')
     date_str = request.GET.get('date')
     start_date_str = request.GET.get('start_date')
     end_date_str = request.GET.get('end_date')
-    region = getattr(request, 'region', None)
 
     # Validate required params
-    if not all([professional_id, service_id, region]):
+    if not all([professional_id, service_id]):
         return Response(
-            {'error': 'professional_id, service_id, and region are required'},
+            {'error': 'professional_id and service_id are required'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -366,6 +366,71 @@ def get_available_slots(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    def get_slots_for_date(date):
+        availability = professional.availability_schedule.filter(
+            weekday=date.weekday(),
+            is_active=True
+        )
+        if not availability.exists():
+            return []
+        slots = []
+        slot_duration = 30  # 30-minute slots
+        for avail in availability:
+            current_time = datetime.combine(date, avail.start_time)
+            end_time = datetime.combine(date, avail.end_time)
+            # Handle breaks
+            break_start = None
+            break_end = None
+            if avail.break_start and avail.break_end:
+                break_start = datetime.combine(date, avail.break_start)
+                break_end = datetime.combine(date, avail.break_end)
+            while current_time + timedelta(minutes=slot_duration) <= end_time:
+                slot_end = current_time + timedelta(minutes=slot_duration)
+                # Check if slot conflicts with break time
+                if break_start and break_end:
+                    if not (slot_end <= break_start or current_time >= break_end):
+                        current_time += timedelta(minutes=slot_duration)
+                        continue
+                # Check unavailability (no region filter)
+                unavailabilities = professional.unavailable_dates.filter(date=date)
+                is_unavailable = False
+                for unavail in unavailabilities:
+                    if unavail.start_time is None and unavail.end_time is None:
+                        is_unavailable = True
+                        break
+                    if unavail.start_time is None or unavail.end_time is None:
+                        is_unavailable = True
+                        break
+                    if (current_time.time() < unavail.end_time and slot_end.time() > unavail.start_time):
+                        is_unavailable = True
+                        break
+                if is_unavailable:
+                    current_time += timedelta(minutes=slot_duration)
+                    continue
+                # Check for existing bookings (no region filter)
+                from bookings.models import Booking
+                existing_bookings = Booking.objects.filter(
+                    professional=professional,
+                    scheduled_date=date,
+                    status__in=['confirmed', 'in_progress']
+                )
+                is_booked = False
+                for booking in existing_bookings:
+                    booking_start = booking.scheduled_time
+                    booking_end = (datetime.combine(date, booking_start) + timedelta(minutes=booking.duration_minutes)).time()
+                    if (current_time.time() < booking_end and slot_end.time() > booking_start):
+                        is_booked = True
+                        break
+                slots.append({
+                    'date': date,
+                    'start_time': current_time.time(),
+                    'end_time': slot_end.time(),
+                    'is_available': not (is_unavailable or is_booked),
+                    'price': service.get_regional_price(getattr(booking, 'region', None)) if is_booked else service.get_regional_price(None)
+                })
+                current_time += timedelta(minutes=slot_duration)
+        return slots
+
     # If start_date and end_date are provided, return all available slots for the range
     if start_date_str and end_date_str:
         try:
@@ -375,63 +440,15 @@ def get_available_slots(request):
             return Response({'error': 'Invalid date format for start_date or end_date'}, status=status.HTTP_400_BAD_REQUEST)
         if start_date > end_date:
             return Response({'error': 'start_date must be before or equal to end_date'}, status=status.HTTP_400_BAD_REQUEST)
-        
         results = []
         current_date = start_date
         while current_date <= end_date:
-            availability = professional.get_availability_for_date(current_date, region)
-            if availability.exists():
-                slots = []
-                slot_duration = 30  # 30-minute slots
-                service_duration = service.duration_minutes
-                for avail in availability:
-                    current_time = datetime.combine(current_date, avail.start_time)
-                    end_time = datetime.combine(current_date, avail.end_time)
-                    # Handle breaks
-                    break_start = None
-                    break_end = None
-                    if avail.break_start and avail.break_end:
-                        break_start = datetime.combine(current_date, avail.break_start)
-                        break_end = datetime.combine(current_date, avail.break_end)
-                    while current_time + timedelta(minutes=service_duration) <= end_time:
-                        slot_end = current_time + timedelta(minutes=service_duration)
-                        # Check if slot conflicts with break time
-                        if break_start and break_end:
-                            if not (slot_end <= break_start or current_time >= break_end):
-                                current_time += timedelta(minutes=slot_duration)
-                                continue
-                        # Check availability
-                        is_available = professional.is_available(
-                            current_date,
-                            current_time.time(),
-                            service_duration,
-                            region
-                        )
-                        # Get price
-                        try:
-                            prof_service = ProfessionalService.objects.get(
-                                professional=professional,
-                                service=service,
-                                region=region,
-                                is_active=True
-                            )
-                            price = prof_service.get_price()
-                        except ProfessionalService.DoesNotExist:
-                            price = service.get_regional_price(region)
-                        if is_available:
-                            slots.append({
-                                'date': current_date,
-                                'start_time': current_time.time(),
-                                'end_time': slot_end.time(),
-                                'is_available': is_available,
-                                'price': price
-                            })
-                        current_time += timedelta(minutes=slot_duration)
-                if slots:
-                    results.append({
-                        'date': current_date,
-                        'slots': slots
-                    })
+            slots = get_slots_for_date(current_date)
+            if slots:
+                results.append({
+                    'date': current_date,
+                    'slots': slots
+                })
             current_date += timedelta(days=1)
         return Response(results)
 
@@ -442,55 +459,7 @@ def get_available_slots(request):
         date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
         return Response({'error': 'Invalid date format for date'}, status=status.HTTP_400_BAD_REQUEST)
-
-    availability = professional.get_availability_for_date(date, region)
-    if not availability.exists():
-        return Response([])
-    slots = []
-    slot_duration = 30  # 30-minute slots
-    service_duration = service.duration_minutes
-    for avail in availability:
-        current_time = datetime.combine(date, avail.start_time)
-        end_time = datetime.combine(date, avail.end_time)
-        # Handle breaks
-        break_start = None
-        break_end = None
-        if avail.break_start and avail.break_end:
-            break_start = datetime.combine(date, avail.break_start)
-            break_end = datetime.combine(date, avail.break_end)
-        while current_time + timedelta(minutes=service_duration) <= end_time:
-            slot_end = current_time + timedelta(minutes=service_duration)
-            # Check if slot conflicts with break time
-            if break_start and break_end:
-                if not (slot_end <= break_start or current_time >= break_end):
-                    current_time += timedelta(minutes=slot_duration)
-                    continue
-            # Check availability
-            is_available = professional.is_available(
-                date, 
-                current_time.time(), 
-                service_duration, 
-                region
-            )
-            # Get price
-            try:
-                prof_service = ProfessionalService.objects.get(
-                    professional=professional,
-                    service=service,
-                    region=region,
-                    is_active=True
-                )
-                price = prof_service.get_price()
-            except ProfessionalService.DoesNotExist:
-                price = service.get_regional_price(region)
-            slots.append({
-                'date': date,
-                'start_time': current_time.time(),
-                'end_time': slot_end.time(),
-                'is_available': is_available,
-                'price': price
-            })
-            current_time += timedelta(minutes=slot_duration)
+    slots = get_slots_for_date(date)
     serializer = AvailabilitySlotSerializer(slots, many=True)
     return Response(serializer.data)
 
