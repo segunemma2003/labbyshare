@@ -142,8 +142,12 @@ class BookingCreateView(generics.CreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         """
-        Create booking with server-side payment calculation in atomic transaction
+        Create booking with comprehensive error logging
         """
+        # Log the incoming request
+        logger.info(f"Booking creation request from user {request.user.id}")
+        logger.debug(f"Request data: {request.data}")
+        
         try:
             with transaction.atomic():
                 # Create the booking with server-side calculations
@@ -154,53 +158,92 @@ class BookingCreateView(generics.CreateAPIView):
                     booking_data = response.data
                     booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
                     
+                    logger.info(f"Booking {booking.booking_id} created successfully")
+                    
                     # Get server-calculated payment details
                     payment_amount = getattr(booking, '_payment_amount', booking.deposit_amount)
                     payment_type = getattr(booking, '_payment_type', 'partial')
                     
-                    # Create Stripe customer for this transaction (no storage on user model)
-                    customer = StripePaymentService.create_customer(request.user)
+                    logger.info(f"Creating Stripe payment intent for booking {booking.booking_id}")
+                    logger.debug(f"Payment amount: {payment_amount}, Payment type: {payment_type}")
                     
-                    # Create payment intent with server-calculated amounts
-                    payment_intent, payment = StripePaymentService.create_payment_intent(
-                        booking=booking,
-                        amount=payment_amount,
-                        payment_type=payment_type,
-                        customer_id=customer.id
-                    )
-                    
-                    # Calculate remaining amount
-                    remaining_amount = booking.total_amount - payment_amount
-                    
-                    # Add payment information to response
-                    response.data.update({
-                        'stripe_payment_intent_id': payment_intent.id,
-                        'stripe_client_secret': payment_intent.client_secret,
-                        'payment_amount': str(payment_amount),
-                        'payment_type': payment_type,
-                        'server_calculated': True,  # Indicate server-side calculation
-                        'breakdown': {
-                            'base_amount': str(booking.base_amount),
-                            'addon_amount': str(booking.addon_amount),
-                            'tax_amount': str(booking.tax_amount),
-                            'discount_amount': str(booking.discount_amount),
-                            'total_amount': str(booking.total_amount),
-                            'deposit_amount': str(booking.deposit_amount),
-                            'deposit_percentage': str(booking.deposit_percentage),
-                            'remaining_amount': str(remaining_amount),
-                        }
-                    })
-                    
-                    logger.info(f"Created booking {booking.booking_id} with server-calculated payment: {payment_amount} {payment_intent.currency}")
+                    try:
+                        # Create Stripe customer for this transaction
+                        customer = StripePaymentService.create_customer(request.user)
+                        logger.info(f"Created Stripe customer {customer.id}")
+                        
+                        # Create payment intent with server-calculated amounts
+                        payment_intent, payment = StripePaymentService.create_payment_intent(
+                            booking=booking,
+                            amount=payment_amount,
+                            payment_type=payment_type,
+                            customer_id=customer.id
+                        )
+                        
+                        logger.info(f"Created payment intent {payment_intent.id} for booking {booking.booking_id}")
+                        
+                        # Calculate remaining amount
+                        remaining_amount = booking.total_amount - payment_amount
+                        
+                        # Add payment information to response
+                        response.data.update({
+                            'stripe_payment_intent_id': payment_intent.id,
+                            'stripe_client_secret': payment_intent.client_secret,
+                            'payment_amount': str(payment_amount),
+                            'payment_type': payment_type,
+                            'server_calculated': True,
+                            'breakdown': {
+                                'base_amount': str(booking.base_amount),
+                                'addon_amount': str(booking.addon_amount),
+                                'tax_amount': str(booking.tax_amount),
+                                'discount_amount': str(booking.discount_amount),
+                                'total_amount': str(booking.total_amount),
+                                'deposit_amount': str(booking.deposit_amount),
+                                'deposit_percentage': str(booking.deposit_percentage),
+                                'remaining_amount': str(remaining_amount),
+                            }
+                        })
+                        
+                        logger.info(f"Successfully created booking {booking.booking_id} with payment intent")
+                        
+                    except Exception as stripe_error:
+                        logger.error(f"Stripe payment creation failed for booking {booking.booking_id}")
+                        logger.error(f"Stripe error: {str(stripe_error)}")
+                        logger.error(f"Stripe error traceback: {traceback.format_exc()}")
+                        
+                        # Delete the booking since payment setup failed
+                        booking.delete()
+                        
+                        return Response(
+                            {
+                                'error': 'Failed to setup payment for booking.',
+                                'details': str(stripe_error) if settings.DEBUG else 'Payment setup failed'
+                            },
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
                     
                 return response
                 
         except Exception as e:
-            logger.error(f"Failed to create booking with payment: {str(e)}")
+            logger.error(f"Booking creation failed for user {request.user.id}")
+            logger.error(f"Error: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            logger.error(f"Request data that caused error: {request.data}")
+            
+            # Log additional context
+            try:
+                serializer = self.get_serializer(data=request.data)
+                if not serializer.is_valid():
+                    logger.error(f"Serializer validation errors: {serializer.errors}")
+            except Exception as serializer_error:
+                logger.error(f"Could not validate serializer: {str(serializer_error)}")
+            
             return Response(
                 {
                     'error': 'Failed to create booking with payment. Please try again.',
-                    'details': str(e) if settings.DEBUG else 'Internal server error'
+                    'details': str(e) if settings.DEBUG else 'Internal server error',
+                    'error_type': type(e).__name__ if settings.DEBUG else None
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
