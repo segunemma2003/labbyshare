@@ -147,6 +147,22 @@ class Professional(models.Model):
         
         if not valid_slots.exists():
             return False
+
+        # Check for unavailability
+        unavailabilities = self.unavailable_dates.filter(
+            region=region,
+            date=date
+        )
+        for unavail in unavailabilities:
+            # If start_time and end_time are null, unavailable all day
+            if unavail.start_time is None and unavail.end_time is None:
+                return False
+            # If only one is null, treat as all day
+            if unavail.start_time is None or unavail.end_time is None:
+                return False
+            # Check for overlap with unavailable time
+            if (time < unavail.end_time and end_time > unavail.start_time):
+                return False
         
         # Check for existing bookings
         from bookings.models import Booking
