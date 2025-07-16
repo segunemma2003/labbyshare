@@ -35,9 +35,9 @@ class BookingMessageAdmin(admin.ModelAdmin):
     list_filter = ('is_read', 'created_at')
 
 class BookingStatusHistoryAdmin(admin.ModelAdmin):
-    list_display = ('id', 'booking', 'previous_status', 'new_status', 'changed_by', 'changed_at')
+    list_display = ('id', 'booking', 'previous_status', 'new_status', 'changed_by')
     search_fields = ('booking__booking_id', 'changed_by__email')
-    list_filter = ('previous_status', 'new_status', 'changed_at')
+    list_filter = ('previous_status', 'new_status')
 
 admin.site.register(Booking, BookingAdmin)
 admin.site.register(BookingAddOn)
