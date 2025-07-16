@@ -65,3 +65,4 @@ openpyxl
 # Search & Analytics
 elasticsearch-dsl
 django-elasticsearch-dsl
+python-dotenv
