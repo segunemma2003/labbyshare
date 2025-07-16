@@ -122,7 +122,8 @@ class Booking(models.Model):
     total_amount = models.DecimalField(
         max_digits=10, 
         decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.01'))]
+        validators=[MinValueValidator(Decimal('0.01'))],
+        null=True, blank=True  # Allow null temporarily during creation
     )
     
     # Status tracking
@@ -199,8 +200,12 @@ class Booking(models.Model):
         return f"Booking {self.booking_id} - {self.service.name}"
     
     def save(self, *args, **kwargs):
-        # Calculate amounts if not set
-        if not self.deposit_amount and self.deposit_required:
+        # Calculate total amount if not set
+        if self.total_amount is None:
+            self.total_amount = self.calculate_total()
+        
+        # Calculate deposit amount if not set and deposit is required
+        if not self.deposit_amount and self.deposit_required and self.total_amount:
             self.deposit_amount = (self.total_amount * self.deposit_percentage) / 100
         
         super().save(*args, **kwargs)
@@ -228,14 +233,14 @@ class Booking(models.Model):
         return timezone.now() < cancellation_deadline
     
     def calculate_total(self):
-        """Calculate and update total amount"""
-        self.total_amount = (
-            self.base_amount + 
-            self.addon_amount + 
-            self.tax_amount - 
-            self.discount_amount
+        """Calculate and return total amount"""
+        total = (
+            (self.base_amount or Decimal('0.00')) + 
+            (self.addon_amount or Decimal('0.00')) + 
+            (self.tax_amount or Decimal('0.00')) - 
+            (self.discount_amount or Decimal('0.00'))
         )
-        return self.total_amount
+        return total
 
 
 class BookingAddOn(models.Model):
