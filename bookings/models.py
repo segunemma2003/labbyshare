@@ -241,6 +241,25 @@ class Booking(models.Model):
             (self.discount_amount or Decimal('0.00'))
         )
         return total
+    
+    @property
+    def remaining_payment_amount(self):
+        """Get remaining payment amount (server-calculated)"""
+        if self.payment_status == 'partial_paid':
+            return self.total_amount - self.deposit_amount
+        return Decimal('0.00')
+    
+    @property
+    def next_payment_amount(self):
+        """Get next payment amount required"""
+        if self.payment_status == 'pending':
+            if self.deposit_required:
+                return self.deposit_amount
+            else:
+                return self.total_amount
+        elif self.payment_status == 'partial_paid':
+            return self.remaining_payment_amount
+        return Decimal('0.00')
 
 
 class BookingAddOn(models.Model):

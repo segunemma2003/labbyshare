@@ -70,13 +70,13 @@ class BookingListView(generics.ListAPIView):
 
 class BookingCreateView(generics.CreateAPIView):
     """
-    Create new booking with payment processing
+    Create new booking with server-side payment calculation
     """
     serializer_class = BookingCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
     
     @swagger_auto_schema(
-        operation_description="Create new booking with payment options",
+        operation_description="Create new booking with server-side payment calculation",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             required=['professional', 'service', 'scheduled_date', 'scheduled_time'],
@@ -87,9 +87,9 @@ class BookingCreateView(generics.CreateAPIView):
                 'scheduled_time': openapi.Schema(type=openapi.TYPE_STRING, format='time', description='Booking time (HH:MM)'),
                 'payment_type': openapi.Schema(
                     type=openapi.TYPE_STRING,
-                    enum=['full', 'deposit'],
-                    default='deposit',
-                    description='Payment type: "full" for full payment, "deposit" for deposit only'
+                    enum=['full', 'partial'],
+                    default='partial',
+                    description='Payment type: "full" for full payment, "partial" for 50% now + 50% later'
                 ),
                 'selected_addons': openapi.Schema(
                     type=openapi.TYPE_ARRAY,
@@ -101,12 +101,6 @@ class BookingCreateView(generics.CreateAPIView):
                         }
                     ),
                     description='Selected addons with quantities'
-                ),
-                'discount_amount': openapi.Schema(
-                    type=openapi.TYPE_NUMBER,
-                    format='decimal',
-                    default=0.00,
-                    description='Discount amount to apply'
                 ),
                 'booking_for_self': openapi.Schema(type=openapi.TYPE_BOOLEAN, default=True),
                 'address_line1': openapi.Schema(type=openapi.TYPE_STRING),
@@ -124,6 +118,7 @@ class BookingCreateView(generics.CreateAPIView):
                     'stripe_payment_intent_id': openapi.Schema(type=openapi.TYPE_STRING),
                     'stripe_client_secret': openapi.Schema(type=openapi.TYPE_STRING),
                     'payment_type': openapi.Schema(type=openapi.TYPE_STRING),
+                    'server_calculated': openapi.Schema(type=openapi.TYPE_BOOLEAN, default=True),
                     'breakdown': openapi.Schema(
                         type=openapi.TYPE_OBJECT,
                         properties={
@@ -133,6 +128,8 @@ class BookingCreateView(generics.CreateAPIView):
                             'discount_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
                             'total_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
                             'deposit_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'deposit_percentage': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'remaining_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
                         }
                     )
                 }
@@ -141,107 +138,69 @@ class BookingCreateView(generics.CreateAPIView):
         }
     )
     def post(self, request, *args, **kwargs):
-        # Create the booking first
-        response = super().post(request, *args, **kwargs)
-        
-        # If booking was created successfully, process payment
-        if response.status_code == 201:
-            try:
-                booking_data = response.data
-                booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
-                
-                # Get payment details
-                payment_amount = getattr(booking, '_payment_amount', booking.deposit_amount)
-                payment_type = getattr(booking, '_payment_type', 'deposit')
-                
-                # Create/get Stripe customer
-                customer_id = self._get_or_create_stripe_customer(request.user)
-                
-                # Create payment intent
-                payment_intent_data = self._create_payment_intent(
-                    booking=booking,
-                    payment_amount=payment_amount,
-                    payment_type=payment_type,
-                    customer_id=customer_id
-                )
-                
-                # Add payment information to response
-                response.data.update({
-                    'stripe_payment_intent_id': payment_intent_data['payment_intent_id'],
-                    'stripe_client_secret': payment_intent_data['client_secret'],
-                    'payment_amount': str(payment_amount),
-                    'payment_type': payment_type,
-                    'breakdown': {
-                        'base_amount': str(booking.base_amount),
-                        'addon_amount': str(booking.addon_amount),
-                        'tax_amount': str(booking.tax_amount),
-                        'discount_amount': str(booking.discount_amount),
-                        'total_amount': str(booking.total_amount),
-                        'deposit_amount': str(booking.deposit_amount),
-                    }
-                })
-                
-                logger.info(f"Created booking {booking.booking_id} with payment intent {payment_intent_data['payment_intent_id']}")
-                
-            except Exception as e:
-                # Log error but don't fail the booking creation
-                logger.error(f"Failed to create payment intent for booking {booking.booking_id}: {str(e)}")
-                response.data['payment_error'] = "Booking created but payment processing failed. Please contact support."
-        
-        return response
-    
-    def _get_or_create_stripe_customer(self, user):
-        """Get or create Stripe customer"""
+        """
+        Create booking with server-side payment calculation in atomic transaction
+        """
         try:
-            from payments.services import StripePaymentService
-            
-            # Check if user already has a Stripe customer ID
-            if hasattr(user, 'stripe_customer_id') and user.stripe_customer_id:
-                return user.stripe_customer_id
-            
-            # Create new Stripe customer
-            customer = StripePaymentService.create_customer(user)
-            
-            # Update user with Stripe customer ID
-            user.stripe_customer_id = customer.id
-            user.save(update_fields=['stripe_customer_id'])
-            
-            return customer.id
-            
+            with transaction.atomic():
+                # Create the booking with server-side calculations
+                response = super().post(request, *args, **kwargs)
+                
+                # If booking was created successfully, process payment
+                if response.status_code == 201:
+                    booking_data = response.data
+                    booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
+                    
+                    # Get server-calculated payment details
+                    payment_amount = getattr(booking, '_payment_amount', booking.deposit_amount)
+                    payment_type = getattr(booking, '_payment_type', 'partial')
+                    
+                    # Create Stripe customer for this transaction (no storage on user model)
+                    customer = StripePaymentService.create_customer(request.user)
+                    
+                    # Create payment intent with server-calculated amounts
+                    payment_intent, payment = StripePaymentService.create_payment_intent(
+                        booking=booking,
+                        amount=payment_amount,
+                        payment_type=payment_type,
+                        customer_id=customer.id
+                    )
+                    
+                    # Calculate remaining amount
+                    remaining_amount = booking.total_amount - payment_amount
+                    
+                    # Add payment information to response
+                    response.data.update({
+                        'stripe_payment_intent_id': payment_intent.id,
+                        'stripe_client_secret': payment_intent.client_secret,
+                        'payment_amount': str(payment_amount),
+                        'payment_type': payment_type,
+                        'server_calculated': True,  # Indicate server-side calculation
+                        'breakdown': {
+                            'base_amount': str(booking.base_amount),
+                            'addon_amount': str(booking.addon_amount),
+                            'tax_amount': str(booking.tax_amount),
+                            'discount_amount': str(booking.discount_amount),
+                            'total_amount': str(booking.total_amount),
+                            'deposit_amount': str(booking.deposit_amount),
+                            'deposit_percentage': str(booking.deposit_percentage),
+                            'remaining_amount': str(remaining_amount),
+                        }
+                    })
+                    
+                    logger.info(f"Created booking {booking.booking_id} with server-calculated payment: {payment_amount} {payment_intent.currency}")
+                    
+                return response
+                
         except Exception as e:
-            logger.error(f"Failed to create Stripe customer for user {user.id}: {str(e)}")
-            return None
-    
-    def _create_payment_intent(self, booking, payment_amount, payment_type, customer_id):
-        """Create Stripe payment intent"""
-        try:
-            from payments.services import StripePaymentService
-            
-            # Create payment intent
-            payment_intent, payment = StripePaymentService.create_payment_intent(
-                booking=booking,
-                amount=payment_amount,
-                payment_type=payment_type,
-                customer_id=customer_id
+            logger.error(f"Failed to create booking with payment: {str(e)}")
+            return Response(
+                {
+                    'error': 'Failed to create booking with payment. Please try again.',
+                    'details': str(e) if settings.DEBUG else 'Internal server error'
+                },
+                status=status.HTTP_400_BAD_REQUEST
             )
-            
-            # Update booking payment status
-            if payment_type == 'full':
-                booking.payment_status = 'pending'  # Will be updated to 'fully_paid' when payment succeeds
-            else:
-                booking.payment_status = 'pending'  # Will be updated to 'deposit_paid' when payment succeeds
-            
-            booking.save(update_fields=['payment_status'])
-            
-            return {
-                'payment_intent_id': payment_intent.id,
-                'client_secret': payment_intent.client_secret,
-                'payment_id': payment.id if payment else None
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to create payment intent for booking {booking.booking_id}: {str(e)}")
-            raise e
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -261,6 +220,8 @@ class BookingCreateView(generics.CreateAPIView):
             )
         except Exception as e:
             logger.error(f"Failed to send booking notification: {str(e)}")
+
+
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -514,3 +475,74 @@ class BookingMessageView(generics.ListCreateAPIView):
             raise PermissionError("No access to this booking")
         
         serializer.save(booking=booking, sender=user)
+        
+        
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@swagger_auto_schema(
+    operation_description="Process remaining payment for partially paid booking",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['booking_id'],
+        properties={
+            'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),
+        }
+    ),
+    responses={
+        200: openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'stripe_payment_intent_id': openapi.Schema(type=openapi.TYPE_STRING),
+                'stripe_client_secret': openapi.Schema(type=openapi.TYPE_STRING),
+                'payment_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'payment_type': openapi.Schema(type=openapi.TYPE_STRING, default='remaining'),
+                'server_calculated': openapi.Schema(type=openapi.TYPE_BOOLEAN, default=True),
+            }
+        )
+    }
+)
+def process_remaining_payment(request):
+    """
+    Process remaining payment for a booking that had partial payment completed
+    """
+    try:
+        booking_id = request.data.get('booking_id')
+        
+        if not booking_id:
+            return Response(
+                {'error': 'booking_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify user owns the booking
+        booking = get_object_or_404(
+            Booking,
+            booking_id=booking_id,
+            customer=request.user
+        )
+        
+        # Process remaining payment with server-side calculation
+        payment_intent, payment = StripePaymentService.process_remaining_payment(str(booking_id))
+        
+        response_data = {
+            'stripe_payment_intent_id': payment_intent.id,
+            'stripe_client_secret': payment_intent.client_secret,
+            'payment_amount': str(payment.amount),
+            'payment_type': 'remaining',
+            'server_calculated': True,
+            'booking_breakdown': {
+                'total_amount': str(booking.total_amount),
+                'initial_payment': str(booking.deposit_amount),
+                'remaining_amount': str(payment.amount),
+            }
+        }
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Remaining payment processing failed: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )

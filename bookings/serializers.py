@@ -73,7 +73,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
 
 class BookingCreateSerializer(serializers.ModelSerializer):
     """
-    Create booking serializer with payment options
+    Create booking serializer with server-side payment calculation
     """
     selected_addons = serializers.ListField(
         child=serializers.DictField(),
@@ -85,20 +85,15 @@ class BookingCreateSerializer(serializers.ModelSerializer):
     payment_type = serializers.ChoiceField(
         choices=[
             ('full', 'Full Payment'),
-            ('deposit', 'Deposit Only')
+            ('partial', 'Partial Payment (50%)')
         ],
-        default='deposit',
+        default='partial',
         write_only=True,
-        help_text="Choose 'full' to pay the entire amount upfront, or 'deposit' to pay only the deposit amount"
+        help_text="Choose 'full' to pay the entire amount upfront, or 'partial' to pay 50% now and 50% later"
     )
     
-    # Add discount fields
-    discount_amount = serializers.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        required=False
-    )
+    # Remove discount_amount from frontend - calculate server-side only
+    # discount_amount = ... (removed)
     
     # Read-only fields for response
     payment_amount = serializers.DecimalField(
@@ -114,20 +109,13 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'professional', 'service', 'scheduled_date', 'scheduled_time',
             'booking_for_self', 'recipient_name', 'recipient_phone', 'recipient_email',
             'address_line1', 'address_line2', 'city', 'postal_code', 'location_notes',
-            'customer_notes', 'selected_addons', 'payment_type', 'discount_amount',
-            'payment_amount'
+            'customer_notes', 'selected_addons', 'payment_type', 'payment_amount'
         ]
     
     def validate_scheduled_date(self, value):
         """Validate booking date is in the future"""
         if value < timezone.now().date():
             raise serializers.ValidationError("Cannot book for past dates")
-        return value
-    
-    def validate_discount_amount(self, value):
-        """Validate discount amount is not negative"""
-        if value < 0:
-            raise serializers.ValidationError("Discount amount cannot be negative")
         return value
     
     def validate(self, attrs):
@@ -148,7 +136,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
                 "Professional does not offer this service in this region"
             )
         
-        # Check professional availability (simplified)
+        # Check professional availability
         weekday = scheduled_date.weekday()
         availability = professional.availability_schedule.filter(
             region=region,
@@ -180,13 +168,12 @@ class BookingCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         selected_addons = validated_data.pop('selected_addons', [])
-        payment_type = validated_data.pop('payment_type', 'deposit')
-        discount_amount = validated_data.pop('discount_amount', Decimal('0.00'))
+        payment_type = validated_data.pop('payment_type', 'partial')
         
         user = self.context['request'].user
         region = self.context['region']
         
-        # Get service pricing
+        # Get service pricing (SERVER-SIDE CALCULATION)
         professional = validated_data['professional']
         service = validated_data['service']
         
@@ -200,13 +187,13 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         except:
             base_price = service.get_regional_price(region)
         
-        # Calculate add-on total and create addon items
+        # Calculate add-on total (SERVER-SIDE CALCULATION)
         addon_total = Decimal('0.00')
         addon_items = []
         
         for addon_data in selected_addons:
             addon_id = addon_data.get('addon_id')
-            quantity = addon_data.get('quantity', 1)
+            quantity = max(1, addon_data.get('quantity', 1))  # Ensure positive quantity
             
             try:
                 addon = service.category.addons.get(id=addon_id, is_active=True)
@@ -219,34 +206,44 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             except:
                 continue
         
-        # Calculate tax (you can customize this based on your region's tax rules)
+        # Calculate tax based on region (SERVER-SIDE CALCULATION)
         tax_rate = self._get_tax_rate(region)
-        subtotal = base_price + addon_total - discount_amount
+        subtotal = base_price + addon_total
         tax_amount = subtotal * tax_rate / 100
         
-        # Calculate total amount
+        # Apply any server-side discounts (if applicable)
+        discount_amount = self._calculate_discount(user, service, subtotal)
+        
+        # Calculate total amount (SERVER-SIDE CALCULATION)
         total_amount = base_price + addon_total + tax_amount - discount_amount
         
-        # Validate discount doesn't exceed subtotal
-        if discount_amount > (base_price + addon_total):
+        # Validate total amount is positive
+        if total_amount <= 0:
             raise serializers.ValidationError(
-                "Discount amount cannot exceed the service and addon costs"
+                "Invalid booking calculation. Please contact support."
             )
         
-        # Calculate deposit and payment amounts based on payment type
+        # Calculate payment amounts based on payment type (SERVER-SIDE CALCULATION)
         if payment_type == 'full':
-            # Full payment: deposit_amount = total_amount (paying everything upfront)
+            # Full payment: pay entire amount upfront
             deposit_amount = total_amount
             payment_amount = total_amount
-            deposit_required = False  # Not requiring separate deposit since paying full
+            deposit_required = False
+            deposit_percentage = Decimal('100.00')
         else:
-            # Deposit payment: normal deposit calculation
-            deposit_percentage = Decimal('20.00')  # You can make this configurable
+            # Partial payment: pay 50% now, 50% later
+            deposit_percentage = Decimal('50.00')
             deposit_amount = (total_amount * deposit_percentage) / 100
             payment_amount = deposit_amount
             deposit_required = True
         
-        # Create booking with all calculated amounts
+        # Ensure payment amount is valid
+        if payment_amount <= 0:
+            raise serializers.ValidationError(
+                "Payment amount must be greater than zero"
+            )
+        
+        # Create booking with calculated amounts
         booking = Booking.objects.create(
             customer=user,
             region=region,
@@ -257,6 +254,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             discount_amount=discount_amount,
             total_amount=total_amount,
             deposit_required=deposit_required,
+            deposit_percentage=deposit_percentage,
             deposit_amount=deposit_amount,
             **validated_data
         )
@@ -287,18 +285,38 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         return booking
     
     def _get_tax_rate(self, region):
-        """Get tax rate based on region"""
+        """Get tax rate based on region (SERVER-SIDE CALCULATION)"""
         tax_rates = {
             'UK': Decimal('20.00'),    # VAT 20%
             'UAE': Decimal('5.00'),    # VAT 5%
         }
         return tax_rates.get(region.code, Decimal('0.00'))
     
+    def _calculate_discount(self, user, service, subtotal):
+        """Calculate any applicable discounts (SERVER-SIDE CALCULATION)"""
+        discount_amount = Decimal('0.00')
+        
+        # Example discount logic (implement based on business rules)
+        # First-time customer discount
+        if not user.bookings.exists():
+            discount_amount = min(subtotal * Decimal('0.10'), Decimal('10.00'))  # 10% max £10
+        
+        # Loyalty discount for frequent customers
+        elif user.bookings.filter(status='completed').count() >= 5:
+            discount_amount = subtotal * Decimal('0.05')  # 5% loyalty discount
+        
+        # Service-specific promotions
+        if hasattr(service, 'promotion_discount'):
+            promo_discount = subtotal * (service.promotion_discount / 100)
+            discount_amount = max(discount_amount, promo_discount)
+        
+        return discount_amount
+    
     def to_representation(self, instance):
         """Add payment_amount to the response"""
         data = super().to_representation(instance)
         if hasattr(instance, '_payment_amount'):
-            data['payment_amount'] = instance._payment_amount
+            data['payment_amount'] = str(instance._payment_amount)
         return data
 
 
