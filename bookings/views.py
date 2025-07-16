@@ -8,6 +8,8 @@ from rest_framework.filters import OrderingFilter
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.utils import timezone
+from decimal import Decimal
+import logging
 
 from .models import Booking, Review, BookingReschedule, BookingMessage
 from .serializers import (
@@ -16,6 +18,8 @@ from .serializers import (
     BookingRescheduleSerializer, BookingMessageSerializer
 )
 from .filters import BookingFilter
+
+logger = logging.getLogger(__name__)
 
 
 class BookingListView(generics.ListAPIView):
@@ -66,42 +70,178 @@ class BookingListView(generics.ListAPIView):
 
 class BookingCreateView(generics.CreateAPIView):
     """
-    Create new booking
+    Create new booking with payment processing
     """
     serializer_class = BookingCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
     
     @swagger_auto_schema(
-        operation_description="Create new booking",
-        request_body=BookingCreateSerializer,
-        responses={201: BookingDetailSerializer()}
+        operation_description="Create new booking with payment options",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['professional', 'service', 'scheduled_date', 'scheduled_time'],
+            properties={
+                'professional': openapi.Schema(type=openapi.TYPE_INTEGER, description='Professional ID'),
+                'service': openapi.Schema(type=openapi.TYPE_INTEGER, description='Service ID'),
+                'scheduled_date': openapi.Schema(type=openapi.TYPE_STRING, format='date', description='Booking date (YYYY-MM-DD)'),
+                'scheduled_time': openapi.Schema(type=openapi.TYPE_STRING, format='time', description='Booking time (HH:MM)'),
+                'payment_type': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    enum=['full', 'deposit'],
+                    default='deposit',
+                    description='Payment type: "full" for full payment, "deposit" for deposit only'
+                ),
+                'selected_addons': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'addon_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                            'quantity': openapi.Schema(type=openapi.TYPE_INTEGER, default=1)
+                        }
+                    ),
+                    description='Selected addons with quantities'
+                ),
+                'discount_amount': openapi.Schema(
+                    type=openapi.TYPE_NUMBER,
+                    format='decimal',
+                    default=0.00,
+                    description='Discount amount to apply'
+                ),
+                'booking_for_self': openapi.Schema(type=openapi.TYPE_BOOLEAN, default=True),
+                'address_line1': openapi.Schema(type=openapi.TYPE_STRING),
+                'city': openapi.Schema(type=openapi.TYPE_STRING),
+                'customer_notes': openapi.Schema(type=openapi.TYPE_STRING),
+            }
+        ),
+        responses={
+            201: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),
+                    'total_amount': openapi.Schema(type=openapi.TYPE_NUMBER, format='decimal'),
+                    'payment_amount': openapi.Schema(type=openapi.TYPE_NUMBER, format='decimal'),
+                    'stripe_payment_intent_id': openapi.Schema(type=openapi.TYPE_STRING),
+                    'stripe_client_secret': openapi.Schema(type=openapi.TYPE_STRING),
+                    'payment_type': openapi.Schema(type=openapi.TYPE_STRING),
+                    'breakdown': openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'base_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'addon_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'tax_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'discount_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'total_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                            'deposit_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                        }
+                    )
+                }
+            ),
+            400: 'Bad Request - Validation errors'
+        }
     )
     def post(self, request, *args, **kwargs):
+        # Create the booking first
         response = super().post(request, *args, **kwargs)
-        # If booking was created, create Stripe payment intent and return its ID
+        
+        # If booking was created successfully, process payment
         if response.status_code == 201:
-            booking_id = response.data.get('booking_id')
-            from bookings.models import Booking
-            booking = Booking.objects.get(booking_id=booking_id)
+            try:
+                booking_data = response.data
+                booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
+                
+                # Get payment details
+                payment_amount = getattr(booking, '_payment_amount', booking.deposit_amount)
+                payment_type = getattr(booking, '_payment_type', 'deposit')
+                
+                # Create/get Stripe customer
+                customer_id = self._get_or_create_stripe_customer(request.user)
+                
+                # Create payment intent
+                payment_intent_data = self._create_payment_intent(
+                    booking=booking,
+                    payment_amount=payment_amount,
+                    payment_type=payment_type,
+                    customer_id=customer_id
+                )
+                
+                # Add payment information to response
+                response.data.update({
+                    'stripe_payment_intent_id': payment_intent_data['payment_intent_id'],
+                    'stripe_client_secret': payment_intent_data['client_secret'],
+                    'payment_amount': str(payment_amount),
+                    'payment_type': payment_type,
+                    'breakdown': {
+                        'base_amount': str(booking.base_amount),
+                        'addon_amount': str(booking.addon_amount),
+                        'tax_amount': str(booking.tax_amount),
+                        'discount_amount': str(booking.discount_amount),
+                        'total_amount': str(booking.total_amount),
+                        'deposit_amount': str(booking.deposit_amount),
+                    }
+                })
+                
+                logger.info(f"Created booking {booking.booking_id} with payment intent {payment_intent_data['payment_intent_id']}")
+                
+            except Exception as e:
+                # Log error but don't fail the booking creation
+                logger.error(f"Failed to create payment intent for booking {booking.booking_id}: {str(e)}")
+                response.data['payment_error'] = "Booking created but payment processing failed. Please contact support."
+        
+        return response
+    
+    def _get_or_create_stripe_customer(self, user):
+        """Get or create Stripe customer"""
+        try:
             from payments.services import StripePaymentService
-            # Create payment intent for full amount (or deposit if required)
-            payment_type = 'deposit' if booking.deposit_required else 'full'
-            customer_id = None
-            if hasattr(request.user, 'stripe_customer_id') and request.user.stripe_customer_id:
-                customer_id = request.user.stripe_customer_id
-            else:
-                # Create Stripe customer if not exists
-                customer = StripePaymentService.create_customer(request.user)
-                customer_id = customer.id
+            
+            # Check if user already has a Stripe customer ID
+            if hasattr(user, 'stripe_customer_id') and user.stripe_customer_id:
+                return user.stripe_customer_id
+            
+            # Create new Stripe customer
+            customer = StripePaymentService.create_customer(user)
+            
+            # Update user with Stripe customer ID
+            user.stripe_customer_id = customer.id
+            user.save(update_fields=['stripe_customer_id'])
+            
+            return customer.id
+            
+        except Exception as e:
+            logger.error(f"Failed to create Stripe customer for user {user.id}: {str(e)}")
+            return None
+    
+    def _create_payment_intent(self, booking, payment_amount, payment_type, customer_id):
+        """Create Stripe payment intent"""
+        try:
+            from payments.services import StripePaymentService
+            
+            # Create payment intent
             payment_intent, payment = StripePaymentService.create_payment_intent(
                 booking=booking,
+                amount=payment_amount,
                 payment_type=payment_type,
                 customer_id=customer_id
             )
-            # Add payment intent and charge ID to response
-            response.data['stripe_payment_intent_id'] = payment_intent.id
-            response.data['stripe_charge_id'] = getattr(payment, 'stripe_charge_id', None)
-        return response
+            
+            # Update booking payment status
+            if payment_type == 'full':
+                booking.payment_status = 'pending'  # Will be updated to 'fully_paid' when payment succeeds
+            else:
+                booking.payment_status = 'pending'  # Will be updated to 'deposit_paid' when payment succeeds
+            
+            booking.save(update_fields=['payment_status'])
+            
+            return {
+                'payment_intent_id': payment_intent.id,
+                'client_secret': payment_intent.client_secret,
+                'payment_id': payment.id if payment else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to create payment intent for booking {booking.booking_id}: {str(e)}")
+            raise e
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -110,13 +250,17 @@ class BookingCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         booking = serializer.save()
+        
         # Send notifications
-        from apps.notifications.tasks import send_booking_notification
-        send_booking_notification.delay(
-            booking.id, 
-            'booking_created',
-            [booking.customer.id, booking.professional.user.id]
-        )
+        try:
+            from notifications.tasks import send_booking_notification
+            send_booking_notification.delay(
+                booking.id, 
+                'booking_created',
+                [booking.customer.id, booking.professional.user.id]
+            )
+        except Exception as e:
+            logger.error(f"Failed to send booking notification: {str(e)}")
 
 
 class BookingDetailView(generics.RetrieveAPIView):
@@ -220,12 +364,15 @@ def cancel_booking(request, booking_id):
     )
     
     # Send notifications
-    from apps.notifications.tasks import send_booking_notification
-    send_booking_notification.delay(
-        booking.id,
-        'booking_cancelled',
-        [booking.professional.user.id]
-    )
+    try:
+        from notifications.tasks import send_booking_notification
+        send_booking_notification.delay(
+            booking.id,
+            'booking_cancelled',
+            [booking.professional.user.id]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send cancellation notification: {str(e)}")
     
     return Response({'message': 'Booking cancelled successfully'})
 
@@ -261,12 +408,15 @@ def confirm_booking(request, booking_id):
     booking.save()
     
     # Send notifications
-    from apps.notifications.tasks import send_booking_notification
-    send_booking_notification.delay(
-        booking.id,
-        'booking_confirmed',
-        [booking.customer.id]
-    )
+    try:
+        from notifications.tasks import send_booking_notification
+        send_booking_notification.delay(
+            booking.id,
+            'booking_confirmed',
+            [booking.customer.id]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send confirmation notification: {str(e)}")
     
     return Response({'message': 'Booking confirmed successfully'})
 
@@ -364,5 +514,3 @@ class BookingMessageView(generics.ListCreateAPIView):
             raise PermissionError("No access to this booking")
         
         serializer.save(booking=booking, sender=user)
-
-

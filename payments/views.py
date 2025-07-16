@@ -11,14 +11,17 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.conf import settings
 from django.db import models
+from decimal import Decimal
 import stripe
 import json
 import logging
 
-from .models import Payment, SavedPaymentMethod
+from .models import Payment, SavedPaymentMethod, PaymentRefund
 from .serializers import (
-    PaymentSerializer, PaymentMethodSerializer, PaymentIntentSerializer,
-    RefundRequestSerializer
+    PaymentSerializer, PaymentMethodSerializer, PaymentIntentCreateSerializer,
+    PaymentIntentResponseSerializer, PaymentConfirmSerializer,
+    RefundRequestSerializer, RefundResponseSerializer, RemainingPaymentSerializer,
+    PaymentSummarySerializer, BookingPaymentStatusSerializer
 )
 from .services import StripePaymentService
 from bookings.models import Booking
@@ -28,14 +31,25 @@ logger = logging.getLogger(__name__)
 
 class PaymentListView(generics.ListAPIView):
     """
-    List user payments
+    List user payments with filtering and pagination
     """
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ['status', 'payment_type']
-    ordering_fields = ['created_at', 'amount']
+    filterset_fields = ['status', 'payment_type', 'currency']
+    ordering_fields = ['created_at', 'amount', 'processed_at']
     ordering = ['-created_at']
+    
+    @swagger_auto_schema(
+        operation_description="List user payments with filtering options",
+        manual_parameters=[
+            openapi.Parameter('status', openapi.IN_QUERY, description="Filter by payment status", type=openapi.TYPE_STRING),
+            openapi.Parameter('payment_type', openapi.IN_QUERY, description="Filter by payment type", type=openapi.TYPE_STRING),
+            openapi.Parameter('currency', openapi.IN_QUERY, description="Filter by currency", type=openapi.TYPE_STRING),
+        ]
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
     
     def get_queryset(self):
         # Handle schema generation with AnonymousUser
@@ -44,37 +58,49 @@ class PaymentListView(generics.ListAPIView):
             
         return Payment.objects.filter(
             customer=self.request.user
-        ).select_related('booking')
+        ).select_related('booking', 'booking__service', 'booking__professional')
 
 
 class PaymentDetailView(generics.RetrieveAPIView):
     """
-    Get payment details
+    Get detailed payment information
     """
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'payment_id'
+    
+    @swagger_auto_schema(
+        operation_description="Get detailed payment information",
+        responses={200: PaymentSerializer()}
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
     
     def get_queryset(self):
         # Handle schema generation with AnonymousUser
         if getattr(self, 'swagger_fake_view', False):
             return Payment.objects.none()
             
-        return Payment.objects.filter(customer=self.request.user)
+        return Payment.objects.filter(
+            customer=self.request.user
+        ).select_related('booking', 'booking__service')
 
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 @swagger_auto_schema(
-    operation_description="Create payment intent",
-    request_body=PaymentIntentSerializer,
-    responses={200: openapi.Response('Payment intent created')}
+    operation_description="Create payment intent for booking",
+    request_body=PaymentIntentCreateSerializer,
+    responses={
+        200: PaymentIntentResponseSerializer(),
+        400: 'Bad Request - Validation errors'
+    }
 )
 def create_payment_intent(request):
     """
-    Create Stripe payment intent
+    Create Stripe payment intent for booking payment
     """
-    serializer = PaymentIntentSerializer(data=request.data, context={'request': request})
+    serializer = PaymentIntentCreateSerializer(data=request.data, context={'request': request})
     
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -84,7 +110,19 @@ def create_payment_intent(request):
         payment_type = serializer.validated_data['payment_type']
         payment_method_id = serializer.validated_data.get('payment_method_id')
         save_payment_method = serializer.validated_data.get('save_payment_method', False)
-        use_saved_method = serializer.validated_data.get('use_saved_method', False)
+        
+        # Calculate payment amount based on type
+        if payment_type == 'full':
+            amount = booking.total_amount
+        elif payment_type == 'deposit':
+            amount = booking.deposit_amount
+        elif payment_type == 'remaining':
+            amount = booking.total_amount - booking.deposit_amount
+        else:
+            return Response(
+                {'error': 'Invalid payment type'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Create or get Stripe customer
         customer = StripePaymentService.create_customer(request.user)
@@ -92,6 +130,7 @@ def create_payment_intent(request):
         # Create payment intent
         payment_intent, payment = StripePaymentService.create_payment_intent(
             booking=booking,
+            amount=amount,
             payment_type=payment_type,
             customer_id=customer.id,
             payment_method_id=payment_method_id
@@ -99,17 +138,35 @@ def create_payment_intent(request):
         
         # Save payment method if requested
         if save_payment_method and payment_method_id:
-            StripePaymentService.save_payment_method(
-                customer.id, 
-                payment_method_id, 
-                request.user
-            )
+            try:
+                StripePaymentService.save_payment_method(
+                    customer.id, 
+                    payment_method_id, 
+                    request.user
+                )
+            except Exception as e:
+                logger.error(f"Failed to save payment method: {str(e)}")
+                # Don't fail the payment creation
         
-        return Response({
+        response_data = {
             'client_secret': payment_intent.client_secret,
             'payment_id': str(payment.payment_id),
-            'requires_action': payment_intent.status == 'requires_action'
-        })
+            'amount': str(amount),
+            'currency': payment_intent.currency,
+            'payment_type': payment_type,
+            'requires_action': payment_intent.status == 'requires_action',
+            'booking_breakdown': {
+                'base_amount': str(booking.base_amount),
+                'addon_amount': str(booking.addon_amount),
+                'tax_amount': str(booking.tax_amount),
+                'discount_amount': str(booking.discount_amount),
+                'total_amount': str(booking.total_amount),
+                'deposit_amount': str(booking.deposit_amount),
+                'amount_being_charged': str(amount),
+            }
+        }
+        
+        return Response(response_data)
         
     except Exception as e:
         logger.error(f"Payment intent creation failed: {str(e)}")
@@ -122,40 +179,55 @@ def create_payment_intent(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 @swagger_auto_schema(
-    operation_description="Confirm payment",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'payment_intent_id': openapi.Schema(type=openapi.TYPE_STRING),
-            'payment_method_id': openapi.Schema(type=openapi.TYPE_STRING),
-        },
-        required=['payment_intent_id']
-    ),
-    responses={200: 'Payment confirmed'}
+    operation_description="Confirm payment intent",
+    request_body=PaymentConfirmSerializer,
+    responses={
+        200: openapi.Response(
+            description="Payment confirmed",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                    'requires_action': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'payment_id': openapi.Schema(type=openapi.TYPE_STRING),
+                    'booking_id': openapi.Schema(type=openapi.TYPE_STRING),
+                }
+            )
+        ),
+        400: 'Bad Request - Payment confirmation failed'
+    }
 )
 def confirm_payment(request):
     """
-    Confirm payment intent
+    Confirm payment intent (for manual confirmation flow)
     """
-    payment_intent_id = request.data.get('payment_intent_id')
-    payment_method_id = request.data.get('payment_method_id')
+    serializer = PaymentConfirmSerializer(data=request.data, context={'request': request})
     
-    if not payment_intent_id:
-        return Response(
-            {'error': 'payment_intent_id is required'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        payment = serializer.validated_data['payment_intent_id']
+        payment_method_id = serializer.validated_data.get('payment_method_id')
+        
+        # Confirm payment intent
         payment_intent = StripePaymentService.confirm_payment_intent(
-            payment_intent_id,
+            payment.stripe_payment_intent_id,
             payment_method_id
         )
         
-        return Response({
+        response_data = {
             'status': payment_intent.status,
-            'requires_action': payment_intent.status == 'requires_action'
-        })
+            'requires_action': payment_intent.status == 'requires_action',
+            'payment_id': str(payment.payment_id),
+            'booking_id': str(payment.booking.booking_id),
+        }
+        
+        # If payment succeeded immediately, update the payment
+        if payment_intent.status == 'succeeded':
+            StripePaymentService.handle_payment_success(payment.stripe_payment_intent_id)
+        
+        return Response(response_data)
         
     except Exception as e:
         logger.error(f"Payment confirmation failed: {str(e)}")
@@ -168,9 +240,68 @@ def confirm_payment(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 @swagger_auto_schema(
-    operation_description="Request refund",
+    operation_description="Process remaining payment for booking",
+    request_body=RemainingPaymentSerializer,
+    responses={
+        200: PaymentIntentResponseSerializer(),
+        400: 'Bad Request - Cannot process remaining payment'
+    }
+)
+def process_remaining_payment(request):
+    """
+    Process remaining payment for a booking that had deposit paid
+    """
+    serializer = RemainingPaymentSerializer(data=request.data, context={'request': request})
+    
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        booking = serializer.validated_data['booking_id']
+        payment_method_id = serializer.validated_data.get('payment_method_id')
+        
+        # Create or get Stripe customer
+        customer = StripePaymentService.create_customer(request.user)
+        
+        # Process remaining payment
+        payment_intent, payment = StripePaymentService.process_remaining_payment(
+            str(booking.booking_id),
+            customer.id
+        )
+        
+        response_data = {
+            'client_secret': payment_intent.client_secret,
+            'payment_id': str(payment.payment_id),
+            'amount': str(payment.amount),
+            'currency': payment_intent.currency,
+            'payment_type': 'remaining',
+            'requires_action': payment_intent.status == 'requires_action',
+            'booking_breakdown': {
+                'total_amount': str(booking.total_amount),
+                'deposit_amount': str(booking.deposit_amount),
+                'remaining_amount': str(payment.amount),
+            }
+        }
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Remaining payment processing failed: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@swagger_auto_schema(
+    operation_description="Request payment refund",
     request_body=RefundRequestSerializer,
-    responses={200: 'Refund processed'}
+    responses={
+        200: RefundResponseSerializer(),
+        400: 'Bad Request - Refund failed'
+    }
 )
 def request_refund(request):
     """
@@ -186,23 +317,170 @@ def request_refund(request):
         amount = serializer.validated_data.get('amount')
         reason = serializer.validated_data['reason']
         
-        refund, refund_payment = StripePaymentService.create_refund(
-            payment,
+        # Process refund
+        refund_result = StripePaymentService.create_refund(
+            payment.id,
             amount,
             reason
         )
         
-        return Response({
-            'message': 'Refund processed successfully',
-            'refund_id': refund.id,
-            'refund_amount': float(refund_payment.amount)
-        })
+        if refund_result['success']:
+            return Response({
+                'success': True,
+                'refund_id': refund_result['refund_id'],
+                'amount': str(refund_result['amount']),
+                'status': refund_result['status'],
+                'message': 'Refund processed successfully'
+            })
+        else:
+            return Response(
+                {'error': refund_result['error']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
     except Exception as e:
-        logger.error(f"Refund failed: {str(e)}")
+        logger.error(f"Refund request failed: {str(e)}")
         return Response(
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+@swagger_auto_schema(
+    operation_description="Get payment summary for user",
+    responses={200: PaymentSummarySerializer()}
+)
+def payment_summary(request):
+    """
+    Get comprehensive payment summary for user
+    """
+    try:
+        payments = Payment.objects.filter(customer=request.user)
+        
+        # Calculate totals
+        total_payments = payments.count()
+        successful_payments = payments.filter(status__in=['completed', 'succeeded']).count()
+        failed_payments = payments.filter(status='failed').count()
+        pending_payments = payments.filter(status='pending').count()
+        
+        # Calculate amounts
+        successful_amount = payments.filter(
+            status__in=['completed', 'succeeded']
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+        
+        refunded_amount = payments.filter(
+            status__in=['refunded', 'partially_refunded']
+        ).aggregate(total=models.Sum('refund_amount'))['total'] or Decimal('0.00')
+        
+        # Currency breakdown
+        currency_breakdown = {}
+        for payment in payments.filter(status__in=['completed', 'succeeded']):
+            currency = payment.currency.upper()
+            if currency not in currency_breakdown:
+                currency_breakdown[currency] = {'amount': Decimal('0.00'), 'count': 0}
+            currency_breakdown[currency]['amount'] += payment.amount
+            currency_breakdown[currency]['count'] += 1
+        
+        # Convert Decimal to string for JSON serialization
+        for currency in currency_breakdown:
+            currency_breakdown[currency]['amount'] = str(currency_breakdown[currency]['amount'])
+        
+        summary = {
+            'total_payments': total_payments,
+            'successful_payments': successful_payments,
+            'failed_payments': failed_payments,
+            'pending_payments': pending_payments,
+            'total_amount_paid': successful_amount,
+            'total_refunded': refunded_amount,
+            'currency_breakdown': currency_breakdown
+        }
+        
+        return Response(summary)
+        
+    except Exception as e:
+        logger.error(f"Payment summary failed: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+@swagger_auto_schema(
+    operation_description="Get payment status for booking",
+    responses={200: BookingPaymentStatusSerializer()}
+)
+def booking_payment_status(request, booking_id):
+    """
+    Get detailed payment status for a specific booking
+    """
+    try:
+        booking = get_object_or_404(
+            Booking,
+            booking_id=booking_id,
+            customer=request.user
+        )
+        
+        # Get all payments for this booking
+        payments = Payment.objects.filter(booking=booking).order_by('-created_at')
+        
+        # Calculate amounts
+        amount_paid = payments.filter(
+            status__in=['completed', 'succeeded']
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+        
+        remaining_amount = booking.total_amount - amount_paid
+        
+        # Determine next payment due
+        next_payment_due = None
+        next_payment_type = None
+        
+        if booking.payment_status == 'pending':
+            if booking.deposit_required:
+                next_payment_due = booking.deposit_amount
+                next_payment_type = 'deposit'
+            else:
+                next_payment_due = booking.total_amount
+                next_payment_type = 'full'
+        elif booking.payment_status == 'deposit_paid':
+            next_payment_due = remaining_amount
+            next_payment_type = 'remaining'
+        
+        # Payment breakdown
+        breakdown = {
+            'base_amount': str(booking.base_amount),
+            'addon_amount': str(booking.addon_amount),
+            'tax_amount': str(booking.tax_amount),
+            'discount_amount': str(booking.discount_amount),
+            'total_amount': str(booking.total_amount),
+            'deposit_amount': str(booking.deposit_amount),
+        }
+        
+        response_data = {
+            'booking_id': str(booking.booking_id),
+            'payment_status': booking.payment_status,
+            'total_amount': booking.total_amount,
+            'deposit_amount': booking.deposit_amount,
+            'amount_paid': amount_paid,
+            'remaining_amount': remaining_amount,
+            'payment_history': PaymentSerializer(payments, many=True).data,
+            'breakdown': breakdown,
+        }
+        
+        if next_payment_due:
+            response_data['next_payment_due'] = next_payment_due
+            response_data['next_payment_type'] = next_payment_type
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logger.error(f"Booking payment status failed: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
@@ -212,6 +490,13 @@ class SavedPaymentMethodsView(generics.ListCreateAPIView):
     """
     serializer_class = PaymentMethodSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="List saved payment methods",
+        responses={200: PaymentMethodSerializer(many=True)}
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
     
     def get_queryset(self):
         # Handle schema generation with AnonymousUser
@@ -230,38 +515,19 @@ class PaymentMethodDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PaymentMethodSerializer
     permission_classes = [permissions.IsAuthenticated]
     
+    @swagger_auto_schema(
+        operation_description="Get, update, or delete payment method",
+        responses={200: PaymentMethodSerializer()}
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
     def get_queryset(self):
-        # Handle schema generation with AnonymousUser - THIS WAS THE MAIN ISSUE
+        # Handle schema generation with AnonymousUser
         if getattr(self, 'swagger_fake_view', False):
             return SavedPaymentMethod.objects.none()
             
         return SavedPaymentMethod.objects.filter(customer=self.request.user)
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-@swagger_auto_schema(
-    operation_description="Get payment summary for user",
-    responses={200: openapi.Response('Payment summary')}
-)
-def payment_summary(request):
-    """
-    Get payment summary for user
-    """
-    payments = Payment.objects.filter(customer=request.user)
-    
-    summary = {
-        'total_payments': payments.count(),
-        'successful_payments': payments.filter(status='succeeded').count(),
-        'total_amount_paid': float(
-            payments.filter(status='succeeded').aggregate(
-                total=models.Sum('amount')
-            )['total'] or 0
-        ),
-        'pending_payments': payments.filter(status='pending').count(),
-        'failed_payments': payments.filter(status='failed').count(),
-    }
-    
-    return Response(summary)
 
 
 @csrf_exempt
@@ -274,23 +540,26 @@ def stripe_webhook(request):
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
     
     try:
+        # Verify webhook signature
         event = stripe.Webhook.construct_event(
             payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
         )
-    except ValueError:
-        logger.error("Invalid payload in Stripe webhook")
-        return HttpResponse(status=400)
-    except stripe.error.SignatureVerificationError:
-        logger.error("Invalid signature in Stripe webhook")
-        return HttpResponse(status=400)
-    
-    # Handle the event
-    try:
-        success = StripePaymentService.handle_webhook_event(event)
-        if success:
+        
+        # Process the event
+        result = StripePaymentService.handle_webhook_event(event)
+        
+        if result['success']:
             return HttpResponse(status=200)
         else:
+            logger.error(f"Webhook processing failed: {result.get('error', 'Unknown error')}")
             return HttpResponse(status=500)
+            
+    except ValueError as e:
+        logger.error(f"Invalid webhook payload: {str(e)}")
+        return HttpResponse(status=400)
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid webhook signature: {str(e)}")
+        return HttpResponse(status=400)
     except Exception as e:
         logger.error(f"Webhook processing error: {str(e)}")
         return HttpResponse(status=500)
