@@ -16,10 +16,10 @@ def send_otp_email(self, email, otp, purpose):
     """
     try:
         if purpose == 'email_verification':
-            subject = 'Verify Your Email - LabMyShare'
+            subject = 'Verify Your Email - The beauty Spa by Shea'
             template = 'emails/email_verification.html'
         else:
-            subject = 'Password Reset - LabMyShare'
+            subject = 'Password Reset - The beauty Spa by Shea'
             template = 'emails/password_reset.html'
         
         html_message = render_to_string(template, {
@@ -29,7 +29,7 @@ def send_otp_email(self, email, otp, purpose):
         })
         
         # Plain text fallback
-        plain_message = f'Your LabMyShare OTP is: {otp}. This code will expire in 10 minutes.'
+        plain_message = f'Your OTP is: {otp}. This code will expire in 10 minutes.'
         
         send_mail(
             subject=subject,
@@ -64,13 +64,13 @@ def send_welcome_email(user_id):
         from .models import User
         user = User.objects.get(id=user_id)
         
-        subject = 'Welcome to LabMyShare!'
+        subject = 'Welcome to The beauty Spa by Shea!'
         html_message = render_to_string('emails/welcome.html', {
             'user': user,
             'region': user.current_region
         })
         
-        plain_message = f'Welcome {user.get_full_name()}! Your LabMyShare account is now active.'
+        plain_message = f'Welcome {user.get_full_name()}! Your  account is now active.'
         
         send_mail(
             subject=subject,

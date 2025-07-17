@@ -9,10 +9,10 @@ from drf_yasg import openapi
 # Swagger Schema View
 schema_view = get_schema_view(
     openapi.Info(
-        title="LabMyShare API",
+        title="The beauty Spa by Shea API",
         default_version='v1',
         description="""
-        LabMyShare Multi-Region Service Booking Platform API
+        The beauty Spa by Shea Multi-Region Service Booking Platform API
         
         ## Features
         - ✅ Multi-region support (UK, UAE)

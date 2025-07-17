@@ -20,7 +20,7 @@ def health_check(request):
     return Response({
         'status': 'healthy',
         'timestamp': timezone.now().isoformat(),
-        'service': 'LabMyShare API'
+        'service': 'The beauty Spa by Shea API'
     })
 
 
@@ -33,7 +33,7 @@ def detailed_health_check(request):
     health_status = {
         'status': 'healthy',
         'timestamp': timezone.now().isoformat(),
-        'service': 'LabMyShare API',
+        'service': 'The beauty Spa by Shea API',
         'checks': {}
     }
     

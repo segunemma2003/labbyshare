@@ -10,7 +10,7 @@ from professionals.models import Professional
 
 
 class Command(BaseCommand):
-    help = 'Create initial system data for LabMyShare'
+    help = 'Create initial system data for The beauty Spa by Shea'
     
     def handle(self, *args, **options):
         self.stdout.write('Creating initial system data...')
