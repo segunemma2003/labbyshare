@@ -278,7 +278,7 @@ def reset_user_password(request):
         from notifications.tasks import send_email_notification
         send_email_notification.delay(
             user_id=user.id,
-            subject='Password Reset - LabMyShare',
+            subject='Password Reset - The beauty Spa by Shea',
             template='emails/password_reset_admin.html',
             context={'user': user}
         )
@@ -501,7 +501,7 @@ def send_maintenance_notification(request):
         if send_email:
             send_email_notification.delay(
                 user_id=user.id,
-                subject=f'{title} - LabMyShare',
+                subject=f'{title} - The beauty Spa by Shea',
                 template='emails/maintenance_notification.html',
                 context={
                     'title': title,
