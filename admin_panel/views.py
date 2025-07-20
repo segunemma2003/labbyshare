@@ -1298,3 +1298,65 @@ def handle_reschedule_request(request):
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Fix booking payment status (admin)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['booking_id'],
+        properties={
+            'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid', description='Booking ID to fix'),
+        }
+    ),
+    responses={200: 'Payment status fixed'}
+)
+def fix_booking_payment_status(request):
+    """
+    Fix booking payment status based on actual payments (admin utility)
+    """
+    booking_id = request.data.get('booking_id')
+    
+    if not booking_id:
+        return Response(
+            {'error': 'booking_id is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        from payments.services import StripePaymentService
+        result = StripePaymentService.fix_booking_payment_status(booking_id)
+        
+        if result['success']:
+            # Log admin activity
+            AdminActivity.objects.create(
+                admin_user=request.user,
+                activity_type='payment_status_fix',
+                description=f"Fixed payment status for booking {booking_id}: {result['old_status']} -> {result['new_status']}",
+                target_model='Booking',
+                target_id=booking_id,
+                previous_data={'payment_status': result['old_status']},
+                new_data={'payment_status': result['new_status']}
+            )
+            
+            return Response({
+                'message': 'Payment status fixed successfully',
+                'old_status': result['old_status'],
+                'new_status': result['new_status'],
+                'total_paid': result['total_paid'],
+                'booking_total': result['booking_total']
+            })
+        else:
+            return Response(
+                {'error': result['error']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+    except Exception as e:
+        logger.error(f"Error fixing payment status: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )

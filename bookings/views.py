@@ -156,7 +156,12 @@ class BookingCreateView(generics.CreateAPIView):
                 # If booking was created successfully, process payment
                 if response.status_code == 201:
                     booking_data = response.data
-                    booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
+                    
+                    # Use the booking object stored in perform_create with temporary attributes
+                    booking = getattr(request, '_booking_with_attrs', None)
+                    if not booking:
+                        # Fallback to database fetch if not available
+                        booking = Booking.objects.get(booking_id=booking_data.get('booking_id'))
                     
                     logger.info(f"Booking {booking.booking_id} created successfully")
                     
@@ -255,6 +260,10 @@ class BookingCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         booking = serializer.save()
+        
+        # Store the booking object with temporary attributes in the request
+        # so we can access it later in the post method
+        self.request._booking_with_attrs = booking
         
         # Send notifications
         try:

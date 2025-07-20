@@ -213,6 +213,12 @@ class StripePaymentService:
             payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
             booking = payment.booking
             
+            logger.info(f"Processing payment success for booking {booking.booking_id}")
+            logger.info(f"Payment type: {payment.payment_type}")
+            logger.info(f"Payment amount: {payment.amount}")
+            logger.info(f"Booking total: {booking.total_amount}")
+            logger.info(f"Current booking payment status: {booking.payment_status}")
+            
             # Verify payment amount matches server calculation
             server_amount = Decimal(payment_intent.metadata.get('amount_being_charged', '0'))
             stripe_amount = Decimal(payment_intent.amount) / 100
@@ -228,12 +234,30 @@ class StripePaymentService:
             payment.save()
             
             # Update booking payment status based on payment type
+            old_payment_status = booking.payment_status
+            
             if payment.payment_type == 'full':
                 booking.payment_status = 'fully_paid'
-            else:  # partial payment
+                logger.info(f"Setting booking {booking.booking_id} to fully_paid (full payment)")
+            elif payment.payment_type == 'partial':
                 booking.payment_status = 'deposit_paid'
+                logger.info(f"Setting booking {booking.booking_id} to deposit_paid (partial payment)")
+            elif payment.payment_type == 'remaining':
+                booking.payment_status = 'fully_paid'
+                logger.info(f"Setting booking {booking.booking_id} to fully_paid (remaining payment)")
+            else:
+                logger.warning(f"Unknown payment type: {payment.payment_type}")
+                # Default to fully_paid if amount matches total
+                if abs(payment.amount - booking.total_amount) < Decimal('0.01'):
+                    booking.payment_status = 'fully_paid'
+                    logger.info(f"Setting booking {booking.booking_id} to fully_paid (amount matches total)")
+                else:
+                    booking.payment_status = 'deposit_paid'
+                    logger.info(f"Setting booking {booking.booking_id} to deposit_paid (amount less than total)")
             
             booking.save()
+            
+            logger.info(f"Payment status updated: {old_payment_status} -> {booking.payment_status}")
             
             # Send confirmation notifications
             try:
@@ -254,7 +278,8 @@ class StripePaymentService:
                 'payment_type': payment.payment_type,
                 'amount': str(payment.amount),
                 'booking_status': booking.status,
-                'payment_status': booking.payment_status
+                'payment_status': booking.payment_status,
+                'old_payment_status': old_payment_status
             }
             
         except Payment.DoesNotExist:
@@ -564,3 +589,55 @@ class StripePaymentService:
             'UAE': 'aed',
         }
         return currency_map.get(region.code, 'gbp')  # Default to GBP
+
+    @staticmethod
+    def fix_booking_payment_status(booking_id: str) -> Dict:
+        """
+        Utility function to fix booking payment status based on actual payments
+        """
+        try:
+            from bookings.models import Booking
+            booking = Booking.objects.get(booking_id=booking_id)
+            
+            # Get all completed payments for this booking
+            completed_payments = booking.payments.filter(status='completed')
+            
+            if not completed_payments.exists():
+                return {'success': False, 'error': 'No completed payments found'}
+            
+            # Calculate total paid amount
+            total_paid = sum(payment.amount for payment in completed_payments)
+            
+            # Check if any payment is full payment
+            has_full_payment = completed_payments.filter(payment_type='full').exists()
+            
+            old_status = booking.payment_status
+            
+            # Determine correct payment status
+            if has_full_payment or abs(total_paid - booking.total_amount) < Decimal('0.01'):
+                booking.payment_status = 'fully_paid'
+                logger.info(f"Fixed booking {booking.booking_id}: {old_status} -> fully_paid (full payment detected)")
+            elif total_paid > 0:
+                booking.payment_status = 'deposit_paid'
+                logger.info(f"Fixed booking {booking.booking_id}: {old_status} -> deposit_paid (partial payment detected)")
+            else:
+                booking.payment_status = 'pending'
+                logger.info(f"Fixed booking {booking.booking_id}: {old_status} -> pending (no payments)")
+            
+            booking.save()
+            
+            return {
+                'success': True,
+                'booking_id': str(booking.booking_id),
+                'old_status': old_status,
+                'new_status': booking.payment_status,
+                'total_paid': str(total_paid),
+                'booking_total': str(booking.total_amount),
+                'has_full_payment': has_full_payment
+            }
+            
+        except Booking.DoesNotExist:
+            return {'success': False, 'error': 'Booking not found'}
+        except Exception as e:
+            logger.error(f"Error fixing booking payment status: {str(e)}")
+            return {'success': False, 'error': str(e)}

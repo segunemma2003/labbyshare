@@ -45,6 +45,7 @@ urlpatterns = [
     path('payments/', views.AdminPaymentListView.as_view(), name='admin_payments'),
     path('payments/<uuid:payment_id>/', views.AdminPaymentDetailView.as_view(), name='admin_payment_detail'),
     path('payments/update-status/', views.update_payment_status, name='update_payment_status'),
+    path('payments/fix-status/', views.fix_booking_payment_status, name='fix_booking_payment_status'),
     
     # ===================== REGION MANAGEMENT =====================
     path('regions/', views.AdminRegionListView.as_view(), name='admin_regions'),
