@@ -492,20 +492,23 @@ class BookingRescheduleView(generics.CreateAPIView):
         try:
             context = super().get_serializer_context()
             booking_id = self.kwargs['booking_id']
-            
-            # Get the booking with better error handling
+
+            # Defensive check for authentication
+            if not hasattr(self.request, 'user') or not self.request.user.is_authenticated:
+                raise serializers.ValidationError("Authentication credentials were not provided or are invalid.")
+
             try:
                 booking = Booking.objects.get(
                     booking_id=booking_id,
-                    customer=request.user,
+                    customer=self.request.user,
                     status__in=['confirmed', 'pending']
                 )
             except Booking.DoesNotExist:
                 raise serializers.ValidationError("Booking not found or you don't have permission to reschedule it")
-            
+
             context['booking'] = booking
             return context
-            
+
         except Exception as e:
             logger.error(f"Error in get_serializer_context: {str(e)}")
             raise serializers.ValidationError(f"Error setting up reschedule request: {str(e)}")
