@@ -385,20 +385,14 @@ class ReviewCreateSerializer(serializers.ModelSerializer):
 
 class BookingRescheduleSerializer(serializers.ModelSerializer):
     """
-    Booking reschedule request serializer
+    Booking reschedule request serializer (customer can only request, admin assigns date)
     """
     class Meta:
         model = BookingReschedule
         fields = [
-            'id', 'requested_date', 'requested_time', 'reason',
-            'status', 'response_reason', 'created_at', 'expires_at'
+            'id', 'reason', 'status', 'response_reason', 'created_at', 'expires_at'
         ]
         read_only_fields = ['status', 'response_reason', 'expires_at']
-    
-    def validate_requested_date(self, value):
-        if value < timezone.now().date():
-            raise serializers.ValidationError("Cannot reschedule to past dates")
-        return value
     
     def create(self, validated_data):
         booking = self.context['booking']
@@ -407,14 +401,35 @@ class BookingRescheduleSerializer(serializers.ModelSerializer):
         # Set expiration (48 hours)
         expires_at = timezone.now() + timedelta(hours=48)
         
-        return BookingReschedule.objects.create(
+        # Create reschedule request without specific date/time
+        # Admin will assign the new date/time when approving
+        reschedule_request = BookingReschedule.objects.create(
             booking=booking,
             requested_by=user,
             original_date=booking.scheduled_date,
             original_time=booking.scheduled_time,
+            requested_date=booking.scheduled_date,  # Placeholder - admin will update
+            requested_time=booking.scheduled_time,  # Placeholder - admin will update
             expires_at=expires_at,
             **validated_data
         )
+        
+        # Notify admin about reschedule request
+        try:
+            from notifications.tasks import create_notification
+            create_notification.delay(
+                user_id=1,  # Assuming admin user ID is 1, adjust as needed
+                notification_type='reschedule_requested',
+                title='New Reschedule Request',
+                message=f'Customer {user.get_full_name()} has requested to reschedule booking {booking.booking_id} (currently scheduled for {booking.scheduled_date} at {booking.scheduled_time}). Reason: {validated_data.get("reason", "No reason provided")}. Please assign a new date/time.',
+                related_booking_id=booking.id
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send reschedule notification to admin: {str(e)}")
+        
+        return reschedule_request
 
 
 class BookingMessageSerializer(serializers.ModelSerializer):

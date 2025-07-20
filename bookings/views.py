@@ -337,7 +337,7 @@ class BookingUpdateView(generics.UpdateAPIView):
 )
 def cancel_booking(request, booking_id):
     """
-    Cancel a booking
+    Cancel a booking (no refunds provided)
     """
     booking = get_object_or_404(
         Booking,
@@ -353,11 +353,15 @@ def cancel_booking(request, booking_id):
     
     reason = request.data.get('reason', '')
     
-    # Update booking status
+    # Update booking status (no refunds for cancellations)
     booking.status = 'cancelled'
     booking.cancelled_by = request.user
     booking.cancelled_at = timezone.now()
     booking.cancellation_reason = reason
+    
+    # Note: Payment status remains unchanged - no refunds
+    # booking.payment_status stays as is (deposit_paid, fully_paid, etc.)
+    
     booking.save()
     
     # Create status history
@@ -378,10 +382,24 @@ def cancel_booking(request, booking_id):
             'booking_cancelled',
             [booking.professional.user.id]
         )
+        
+        # Notify admin about cancellation
+        from notifications.tasks import create_notification
+        create_notification.delay(
+            user_id=1,  # Assuming admin user ID is 1, adjust as needed
+            notification_type='booking_cancelled',
+            title='Booking Cancelled',
+            message=f'Booking {booking.booking_id} has been cancelled by customer. Reason: {reason}. No refund will be provided.',
+            related_booking_id=booking.id
+        )
     except Exception as e:
         logger.error(f"Failed to send cancellation notification: {str(e)}")
     
-    return Response({'message': 'Booking cancelled successfully'})
+    return Response({
+        'message': 'Booking cancelled successfully. No refund will be provided.',
+        'payment_status': booking.payment_status,
+        'note': 'Payment remains with the service provider as per cancellation policy'
+    })
 
 
 @api_view(['POST'])

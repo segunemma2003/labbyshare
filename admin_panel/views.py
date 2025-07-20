@@ -1139,3 +1139,162 @@ class SupportTicketsView(generics.ListAPIView):
         if getattr(self, 'swagger_fake_view', False):
             return SupportTicket.objects.none()
         return SupportTicket.objects.all().order_by('-created_at')
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Handle booking reschedule request (admin)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['reschedule_id', 'action'],
+        properties={
+            'reschedule_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='Reschedule request ID'),
+            'action': openapi.Schema(
+                type=openapi.TYPE_STRING, 
+                enum=['approve', 'reject'],
+                description='Action to take on reschedule request'
+            ),
+            'new_date': openapi.Schema(
+                type=openapi.TYPE_STRING, 
+                format='date',
+                description='New date for rescheduled booking (required when approving)'
+            ),
+            'new_time': openapi.Schema(
+                type=openapi.TYPE_STRING, 
+                format='time',
+                description='New time for rescheduled booking (required when approving)'
+            ),
+            'admin_notes': openapi.Schema(type=openapi.TYPE_STRING, description='Admin notes for the decision'),
+        }
+    ),
+    responses={200: 'Reschedule request processed'}
+)
+def handle_reschedule_request(request):
+    """
+    Handle booking reschedule request by admin
+    """
+    reschedule_id = request.data.get('reschedule_id')
+    action = request.data.get('action')
+    new_date = request.data.get('new_date')
+    new_time = request.data.get('new_time')
+    admin_notes = request.data.get('admin_notes', '')
+    
+    if not reschedule_id or not action:
+        return Response(
+            {'error': 'reschedule_id and action are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    if action not in ['approve', 'reject']:
+        return Response(
+            {'error': 'action must be either "approve" or "reject"'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validate new date and time when approving
+    if action == 'approve':
+        if not new_date or not new_time:
+            return Response(
+                {'error': 'new_date and new_time are required when approving reschedule request'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate that new date is not in the past
+        from datetime import datetime
+        try:
+            new_datetime = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
+            if new_datetime < timezone.now():
+                return Response(
+                    {'error': 'New date and time cannot be in the past'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except ValueError:
+            return Response(
+                {'error': 'Invalid date or time format. Use YYYY-MM-DD for date and HH:MM for time'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    try:
+        from bookings.models import BookingReschedule
+        reschedule_request = BookingReschedule.objects.get(id=reschedule_id, status='pending')
+        booking = reschedule_request.booking
+        
+        # Update reschedule request status
+        reschedule_request.status = 'approved' if action == 'approve' else 'rejected'
+        reschedule_request.responded_by = request.user
+        reschedule_request.response_reason = admin_notes
+        reschedule_request.responded_at = timezone.now()
+        
+        if action == 'approve':
+            # Update the requested date/time with admin's choice
+            reschedule_request.requested_date = new_date
+            reschedule_request.requested_time = new_time
+        
+        reschedule_request.save()
+        
+        if action == 'approve':
+            # Update booking with new date and time (admin's choice)
+            booking.scheduled_date = new_date
+            booking.scheduled_time = new_time
+            booking.status = 'confirmed'  # Re-confirm the booking
+            booking.save()
+            
+            # Create status history
+            from bookings.models import BookingStatusHistory
+            BookingStatusHistory.objects.create(
+                booking=booking,
+                previous_status='confirmed',
+                new_status='rescheduled',
+                changed_by=request.user,
+                reason=f"Reschedule approved by admin. New date: {new_date} {new_time}. Notes: {admin_notes}"
+            )
+            
+            # Send notification to customer
+            from notifications.tasks import create_notification
+            create_notification.delay(
+                user_id=booking.customer.id,
+                notification_type='reschedule_approved',
+                title='Reschedule Request Approved',
+                message=f'Your reschedule request for booking {booking.booking_id} has been approved. New date: {new_date} at {new_time}. Admin notes: {admin_notes}',
+                related_booking_id=booking.id
+            )
+            
+            message = f'Reschedule request approved. Booking updated to {new_date} at {new_time}'
+        else:
+            # Send rejection notification to customer
+            from notifications.tasks import create_notification
+            create_notification.delay(
+                user_id=booking.customer.id,
+                notification_type='reschedule_rejected',
+                title='Reschedule Request Rejected',
+                message=f'Your reschedule request for booking {booking.booking_id} has been rejected. Reason: {admin_notes}',
+                related_booking_id=booking.id
+            )
+            
+            message = 'Reschedule request rejected'
+        
+        # Log admin activity
+        AdminActivity.objects.create(
+            admin_user=request.user,
+            activity_type='reschedule_management',
+            description=f"{action.title()}d reschedule request {reschedule_id} for booking {booking.booking_id}",
+            target_model='BookingReschedule',
+            target_id=str(reschedule_request.id),
+            previous_data={'status': 'pending'},
+            new_data={'status': reschedule_request.status, 'admin_notes': admin_notes}
+        )
+        
+        return Response({'message': message})
+        
+    except BookingReschedule.DoesNotExist:
+        return Response(
+            {'error': 'Reschedule request not found or already processed'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error handling reschedule request: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )

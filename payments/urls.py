@@ -12,6 +12,7 @@ urlpatterns = [
     # Enhanced payment processing
     path('create-intent/', views.create_payment_intent, name='create_payment_intent'),
     path('confirm/', views.confirm_payment, name='confirm_payment'),
+    path('complete/', views.complete_payment, name='complete_payment'),
     path('remaining/', views.process_remaining_payment, name='process_remaining_payment'),
     path('refund/', views.request_refund, name='request_refund'),
     

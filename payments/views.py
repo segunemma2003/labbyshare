@@ -563,3 +563,180 @@ def stripe_webhook(request):
     except Exception as e:
         logger.error(f"Webhook processing error: {str(e)}")
         return HttpResponse(status=500)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@swagger_auto_schema(
+    operation_description="Complete payment for booking",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['booking_id', 'payment_type'],
+        properties={
+            'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid', description='Booking ID'),
+            'payment_type': openapi.Schema(
+                type=openapi.TYPE_STRING, 
+                enum=['full', 'deposit', 'remaining'],
+                description='Type of payment to complete'
+            ),
+            'payment_method_id': openapi.Schema(type=openapi.TYPE_STRING, description='Stripe payment method ID (optional)'),
+        }
+    ),
+    responses={
+        200: openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                'payment_intent_id': openapi.Schema(type=openapi.TYPE_STRING),
+                'client_secret': openapi.Schema(type=openapi.TYPE_STRING),
+                'amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'currency': openapi.Schema(type=openapi.TYPE_STRING),
+                'payment_status': openapi.Schema(type=openapi.TYPE_STRING),
+                'booking_payment_status': openapi.Schema(type=openapi.TYPE_STRING),
+                'message': openapi.Schema(type=openapi.TYPE_STRING),
+            }
+        ),
+        400: 'Bad Request - Validation errors',
+        404: 'Booking not found'
+    }
+)
+def complete_payment(request):
+    """
+    Complete payment for a booking - generates payment intent and handles completion
+    """
+    try:
+        booking_id = request.data.get('booking_id')
+        payment_type = request.data.get('payment_type')
+        payment_method_id = request.data.get('payment_method_id')
+        
+        if not booking_id or not payment_type:
+            return Response(
+                {'error': 'booking_id and payment_type are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify user owns the booking
+        booking = get_object_or_404(
+            Booking,
+            booking_id=booking_id,
+            customer=request.user
+        )
+        
+        # Calculate payment amount based on type
+        if payment_type == 'full':
+            amount = booking.total_amount
+        elif payment_type == 'deposit':
+            amount = booking.deposit_amount
+        elif payment_type == 'remaining':
+            if booking.payment_status != 'deposit_paid':
+                return Response(
+                    {'error': 'Booking must have deposit paid to process remaining payment'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            amount = booking.total_amount - booking.deposit_amount
+        else:
+            return Response(
+                {'error': 'Invalid payment_type. Must be full, deposit, or remaining'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if payment is already completed
+        if payment_type == 'full' and booking.payment_status == 'fully_paid':
+            return Response(
+                {'error': 'Booking is already fully paid'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        elif payment_type == 'deposit' and booking.payment_status in ['deposit_paid', 'fully_paid']:
+            return Response(
+                {'error': 'Deposit is already paid'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        elif payment_type == 'remaining' and booking.payment_status == 'fully_paid':
+            return Response(
+                {'error': 'Booking is already fully paid'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create or get Stripe customer
+        customer = StripePaymentService.create_customer(request.user)
+        
+        # Create payment intent
+        payment_intent, payment = StripePaymentService.create_payment_intent(
+            booking=booking,
+            amount=amount,
+            payment_type=payment_type,
+            customer_id=customer.id,
+            payment_method_id=payment_method_id
+        )
+        
+        # If payment method is provided, try to confirm immediately
+        if payment_method_id:
+            try:
+                confirmed_intent = StripePaymentService.confirm_payment_intent(
+                    payment_intent.id,
+                    payment_method_id
+                )
+                
+                # If payment succeeded immediately, update status
+                if confirmed_intent.status == 'succeeded':
+                    result = StripePaymentService.handle_payment_success(payment_intent.id)
+                    if result['success']:
+                        return Response({
+                            'success': True,
+                            'payment_intent_id': payment_intent.id,
+                            'client_secret': payment_intent.client_secret,
+                            'amount': str(amount),
+                            'currency': payment_intent.currency,
+                            'payment_status': 'completed',
+                            'booking_payment_status': booking.payment_status,
+                            'message': 'Payment completed successfully'
+                        })
+                
+                # If requires action, return client secret
+                return Response({
+                    'success': True,
+                    'payment_intent_id': payment_intent.id,
+                    'client_secret': payment_intent.client_secret,
+                    'amount': str(amount),
+                    'currency': payment_intent.currency,
+                    'payment_status': confirmed_intent.status,
+                    'booking_payment_status': booking.payment_status,
+                    'message': 'Payment requires additional action'
+                })
+                
+            except Exception as e:
+                logger.error(f"Payment confirmation failed: {str(e)}")
+                return Response({
+                    'success': True,
+                    'payment_intent_id': payment_intent.id,
+                    'client_secret': payment_intent.client_secret,
+                    'amount': str(amount),
+                    'currency': payment_intent.currency,
+                    'payment_status': 'requires_confirmation',
+                    'booking_payment_status': booking.payment_status,
+                    'message': 'Payment intent created, requires confirmation'
+                })
+        
+        # Return payment intent for client-side confirmation
+        return Response({
+            'success': True,
+            'payment_intent_id': payment_intent.id,
+            'client_secret': payment_intent.client_secret,
+            'amount': str(amount),
+            'currency': payment_intent.currency,
+            'payment_status': 'pending',
+            'booking_payment_status': booking.payment_status,
+            'message': 'Payment intent created successfully'
+        })
+        
+    except Booking.DoesNotExist:
+        return Response(
+            {'error': 'Booking not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Payment completion failed: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
