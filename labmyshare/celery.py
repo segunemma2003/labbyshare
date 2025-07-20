@@ -26,6 +26,10 @@ app.conf.beat_schedule = {
         'task': 'professionals.tasks.update_ratings',
         'schedule': crontab(minute=0, hour=1),  # Daily at 1 AM
     },
+    'check-and-update-booking-payments': {
+        'task': 'bookings.tasks.check_and_update_booking_payments',
+        'schedule': crontab(minute='*/5'),
+    },
 }
 
 app.conf.timezone = 'UTC'

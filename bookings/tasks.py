@@ -105,3 +105,36 @@ def send_booking_reminder(booking_id, reminder_type):
     except Exception as exc:
         logger.error(f"Failed to send reminder: {str(exc)}")
         return False
+
+@shared_task
+def check_and_update_booking_payments():
+    """
+    Periodic task to update booking payment_status and status.
+    - If deposit_amount == total_amount, set payment_status to 'fully_paid'.
+    - If payment_status is 'deposit_paid', set status to 'confirmed'.
+    Runs every 5 minutes.
+    """
+    now = timezone.now()
+    updated_fully_paid = 0
+    updated_confirmed = 0
+    for booking in Booking.objects.all():
+        # Update payment_status to fully_paid if deposit_amount == total_amount
+        if booking.deposit_amount == booking.total_amount and booking.payment_status != 'fully_paid':
+            booking.payment_status = 'fully_paid'
+            booking.save(update_fields=['payment_status'])
+            updated_fully_paid += 1
+            logger.info(f"Booking {booking.booking_id}: payment_status set to fully_paid.")
+        # Update status to confirmed if payment_status is deposit_paid
+        if booking.payment_status == 'deposit_paid' and booking.status != 'confirmed':
+            booking.status = 'confirmed'
+            booking.confirmed_at = now
+            booking.save(update_fields=['status', 'confirmed_at'])
+            updated_confirmed += 1
+            logger.info(f"Booking {booking.booking_id}: status set to confirmed.")
+    logger.info(f"check_and_update_booking_payments: {updated_fully_paid} bookings set to fully_paid, {updated_confirmed} bookings set to confirmed.")
+
+# Celery beat schedule (add to your Celery config):
+# 'check-and-update-booking-payments': {
+#     'task': 'bookings.tasks.check_and_update_booking_payments',
+#     'schedule': crontab(minute='*/5'),
+# },
