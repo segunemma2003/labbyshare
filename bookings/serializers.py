@@ -414,7 +414,7 @@ class BookingRescheduleSerializer(serializers.ModelSerializer):
             **validated_data
         )
         
-        # Notify admin about reschedule request
+        # Notify admin about reschedule request (optional - don't fail if this fails)
         try:
             from notifications.tasks import create_notification
             create_notification.delay(
@@ -425,9 +425,11 @@ class BookingRescheduleSerializer(serializers.ModelSerializer):
                 related_booking_id=booking.id
             )
         except Exception as e:
+            # Log error but don't fail the reschedule request creation
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to send reschedule notification to admin: {str(e)}")
+            # Continue without notification - reschedule request is still created successfully
         
         return reschedule_request
 

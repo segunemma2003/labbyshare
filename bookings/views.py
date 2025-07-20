@@ -13,7 +13,6 @@ import logging
 from django.conf import settings
 from django.db import transaction
 from payments.services import StripePaymentService
-
 from .models import Booking, Review, BookingReschedule, BookingMessage
 from .serializers import (
     BookingListSerializer, BookingDetailSerializer, BookingCreateSerializer,
@@ -21,6 +20,8 @@ from .serializers import (
     BookingRescheduleSerializer, BookingMessageSerializer
 )
 from .filters import BookingFilter
+import traceback
+from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
 
@@ -468,19 +469,46 @@ class BookingRescheduleView(generics.CreateAPIView):
         responses={201: BookingRescheduleSerializer()}
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        try:
+            logger.info(f"Reschedule request started for user {request.user.id}")
+            logger.info(f"Request data: {request.data}")
+            logger.info(f"URL kwargs: {self.kwargs}")
+            
+            return super().post(request, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Reschedule request failed: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
+            return Response(
+                {
+                    'error': 'Failed to create reschedule request',
+                    'details': str(e) if settings.DEBUG else 'Internal server error',
+                    'error_type': type(e).__name__ if settings.DEBUG else None
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def get_serializer_context(self):
-        context = super().get_serializer_context()
-        booking_id = self.kwargs['booking_id']
-        booking = get_object_or_404(
-            Booking,
-            booking_id=booking_id,
-            customer=request.user,
-            status__in=['confirmed', 'pending']
-        )
-        context['booking'] = booking
-        return context
+        try:
+            context = super().get_serializer_context()
+            booking_id = self.kwargs['booking_id']
+            
+            # Get the booking with better error handling
+            try:
+                booking = Booking.objects.get(
+                    booking_id=booking_id,
+                    customer=request.user,
+                    status__in=['confirmed', 'pending']
+                )
+            except Booking.DoesNotExist:
+                raise serializers.ValidationError("Booking not found or you don't have permission to reschedule it")
+            
+            context['booking'] = booking
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error in get_serializer_context: {str(e)}")
+            raise serializers.ValidationError(f"Error setting up reschedule request: {str(e)}")
 
 
 class ReviewCreateView(generics.CreateAPIView):
@@ -619,3 +647,62 @@ def process_remaining_payment(request):
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def debug_reschedule(request, booking_id):
+    """
+    Debug endpoint to test reschedule functionality
+    """
+    try:
+        logger.info(f"Debug reschedule request for booking {booking_id}")
+        logger.info(f"User: {request.user.id}")
+        
+        # Check if booking exists
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+            logger.info(f"Booking found: {booking.booking_id}, status: {booking.status}")
+        except Booking.DoesNotExist:
+            logger.error(f"Booking {booking_id} not found")
+            return Response({'error': 'Booking not found'}, status=404)
+        
+        # Check if user has permission
+        if booking.customer != request.user:
+            logger.error(f"User {request.user.id} does not own booking {booking_id}")
+            return Response({'error': 'Permission denied'}, status=403)
+        
+        # Check if booking can be rescheduled
+        if booking.status not in ['confirmed', 'pending']:
+            logger.error(f"Booking {booking_id} cannot be rescheduled (status: {booking.status})")
+            return Response({'error': 'Booking cannot be rescheduled'}, status=400)
+        
+        # Test serializer creation
+        try:
+            from .serializers import BookingRescheduleSerializer
+            serializer = BookingRescheduleSerializer(data={'reason': 'Test reason'})
+            if serializer.is_valid():
+                logger.info("Serializer is valid")
+            else:
+                logger.error(f"Serializer errors: {serializer.errors}")
+                return Response({'error': 'Serializer validation failed', 'details': serializer.errors}, status=400)
+        except Exception as e:
+            logger.error(f"Serializer test failed: {str(e)}")
+            return Response({'error': 'Serializer test failed', 'details': str(e)}, status=500)
+        
+        return Response({
+            'message': 'Debug test passed',
+            'booking_id': str(booking.booking_id),
+            'booking_status': booking.status,
+            'user_id': request.user.id,
+            'can_reschedule': True
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug reschedule failed: {str(e)}")
+        logger.error(f"Error traceback: {traceback.format_exc()}")
+        return Response({
+            'error': 'Debug test failed',
+            'details': str(e),
+            'error_type': type(e).__name__
+        }, status=500)

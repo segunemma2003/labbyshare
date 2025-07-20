@@ -14,10 +14,14 @@ urlpatterns = [
     
     # Reschedule
     path('<uuid:booking_id>/reschedule/', views.BookingRescheduleView.as_view(), name='booking_reschedule'),
+    path('<uuid:booking_id>/reschedule/debug/', views.debug_reschedule, name='debug_reschedule'),
     
     # Reviews
     path('<uuid:booking_id>/review/', views.ReviewCreateView.as_view(), name='review_create'),
     
     # Messages
     path('<uuid:booking_id>/messages/', views.BookingMessageView.as_view(), name='booking_messages'),
+    
+    # Payment
+    path('remaining-payment/', views.process_remaining_payment, name='process_remaining_payment'),
 ]
