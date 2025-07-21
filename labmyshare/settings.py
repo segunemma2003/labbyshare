@@ -160,10 +160,13 @@ AUTH_PASSWORD_VALIDATORS = [
 
 FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'labmyshare', 'thebeautyspa.json')
 
-# Only initialize if not already initialized
-if not firebase_admin._apps:
-    cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
-    firebase_admin.initialize_app(cred)
+if os.path.exists(FIREBASE_CREDENTIALS_PATH):
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+        firebase_admin.initialize_app(cred)
+else:
+    # Optionally log or print a warning
+    print(f"⚠️ Firebase credentials not found at {FIREBASE_CREDENTIALS_PATH}. Skipping Firebase initialization.")
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
