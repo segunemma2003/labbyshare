@@ -4,8 +4,16 @@ from .models import Payment, SavedPaymentMethod, PaymentWebhookEvent
 class PaymentAdmin(admin.ModelAdmin):
     list_display = ('payment_id', 'booking', 'customer', 'amount', 'currency', 'payment_type', 'status', 'created_at')
     search_fields = ('payment_id', 'booking__booking_id', 'customer__email')
-    list_filter = ('status', 'payment_type', 'currency', 'created_at')
+    list_filter = ('booking__region', 'status', 'payment_type', 'currency', 'created_at')
     date_hierarchy = 'created_at'
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        if hasattr(request.user, 'current_region') and request.user.current_region:
+            return qs.filter(booking__region=request.user.current_region)
+        return qs.none()
 
 class SavedPaymentMethodAdmin(admin.ModelAdmin):
     list_display = ('id', 'customer', 'stripe_payment_method_id', 'card_brand', 'card_last_four', 'is_default', 'created_at')

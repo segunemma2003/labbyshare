@@ -2,9 +2,9 @@ from django.contrib import admin
 from .models import Booking, BookingAddOn, Review, BookingReschedule, BookingMessage, BookingStatusHistory
 
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ('booking_id', 'customer', 'professional', 'service', 'scheduled_date', 'status', 'payment_status', 'total_amount')
+    list_display = ('booking_id', 'customer', 'professional', 'service', 'region', 'scheduled_date', 'status', 'payment_status', 'total_amount')
     search_fields = ('booking_id', 'customer__email', 'professional__user__email', 'service__name')
-    list_filter = ('status', 'payment_status', 'scheduled_date', 'service')
+    list_filter = ('region', 'status', 'payment_status', 'scheduled_date', 'service')
     date_hierarchy = 'scheduled_date'
     fieldsets = (
         (None, {
@@ -18,6 +18,14 @@ class BookingAdmin(admin.ModelAdmin):
         }),
     )
     readonly_fields = ('booking_id',)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        if hasattr(request.user, 'current_region') and request.user.current_region:
+            return qs.filter(region=request.user.current_region)
+        return qs.none()
 
 class ReviewAdmin(admin.ModelAdmin):
     list_display = ('id', 'booking', 'customer', 'professional', 'overall_rating', 'created_at')
