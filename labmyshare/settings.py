@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -154,6 +157,13 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+
+FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'labmyshare', 'thebeautyspa.json')
+
+# Only initialize if not already initialized
+if not firebase_admin._apps:
+    cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+    firebase_admin.initialize_app(cred)
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
@@ -321,17 +331,6 @@ else:
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 
-# Firebase Configuration
-FIREBASE_CONFIG = {
-    'type': 'service_account',
-    'project_id': os.environ.get('FIREBASE_PROJECT_ID'),
-    'private_key_id': os.environ.get('FIREBASE_PRIVATE_KEY_ID'),
-    'private_key': os.environ.get('FIREBASE_PRIVATE_KEY', '').replace('\\n', '\n'),
-    'client_email': os.environ.get('FIREBASE_CLIENT_EMAIL'),
-    'client_id': os.environ.get('FIREBASE_CLIENT_ID'),
-    'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-    'token_uri': 'https://oauth2.googleapis.com/token',
-}
 
 # Stripe Configuration
 STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
@@ -464,3 +463,8 @@ CACHE_TIMEOUTS = {
 #     print(f"   HTTPS: {'Enabled' if IS_PRODUCTION and globals().get('USE_TLS', False) else 'Disabled'}")
 #     print(f"   Redis: {REDIS_URL}")
 #     print(f"   Static Root: {STATIC_ROOT}")
+
+# Firebase Admin SDK initialization
+
+
+
