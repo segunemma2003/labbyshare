@@ -30,6 +30,11 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
             'date_of_birth', 'gender', 'profile_picture'
         ]
     
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+    
     def create(self, validated_data):
         password = validated_data.pop('password')
         user = User.objects.create_user(
@@ -117,6 +122,11 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             'regions', 'services'
         ]
     
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+    
     def create(self, validated_data):
         # Extract user fields
         user_fields = {
@@ -158,6 +168,10 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                 )
         
         return professional
+    
+    def to_representation(self, instance):
+        # Return only the professional id to avoid AttributeError
+        return {'id': instance.id}
 
 
 class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
