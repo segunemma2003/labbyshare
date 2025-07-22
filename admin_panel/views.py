@@ -52,16 +52,98 @@ class AdminDashboardView(generics.GenericAPIView):
     permission_classes = [IsAdminUser]
     
     @swagger_auto_schema(
-        operation_description="Get paginated services and addons for admin dashboard (filtered by region if provided)",
-        responses={200: 'Paginated services and addons'}
+        operation_description="Get comprehensive admin dashboard statistics and paginated services/addons (filtered by region if provided)",
+        responses={200: 'Dashboard statistics and paginated data'}
     )
     def get(self, request):
         region = get_requested_region(request)
+        today = timezone.now().date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+        
+        # Calculate previous periods for growth
+        prev_week_start = week_start - timedelta(days=7)
+        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+        
+        # Base querysets
+        user_qs = User.objects
+        booking_qs = Booking.objects
+        payment_qs = Payment.objects
+        professional_qs = Professional.objects
         service_qs = Service.objects.filter(is_active=True)
         addon_qs = AddOn.objects.filter(is_active=True)
+        
+        # Apply region filter if provided
         if region:
+            user_qs = user_qs.filter(current_region=region)
+            booking_qs = booking_qs.filter(region=region)
+            payment_qs = payment_qs.filter(booking__region=region)
+            professional_qs = professional_qs.filter(regions=region)
             service_qs = service_qs.filter(category__region=region)
             addon_qs = addon_qs.filter(region=region)
+        
+        # User Statistics
+        total_users = user_qs.filter(user_type='customer').count()
+        total_customers = user_qs.filter(user_type='customer').count()
+        total_professionals = professional_qs.count()
+        
+        new_users_today = user_qs.filter(date_joined__date=today).count()
+        new_users_this_week = user_qs.filter(date_joined__date__gte=week_start).count()
+        new_users_this_month = user_qs.filter(date_joined__date__gte=month_start).count()
+        
+        # Booking Statistics
+        total_bookings = booking_qs.count()
+        bookings_today = booking_qs.filter(created_at__date=today).count()
+        bookings_this_week = booking_qs.filter(created_at__date__gte=week_start).count()
+        bookings_this_month = booking_qs.filter(created_at__date__gte=month_start).count()
+        
+        pending_bookings = booking_qs.filter(status='pending').count()
+        confirmed_bookings = booking_qs.filter(status='confirmed').count()
+        completed_bookings = booking_qs.filter(status='completed').count()
+        
+        # Revenue Statistics
+        successful_payments = payment_qs.filter(status='succeeded')
+        total_revenue = successful_payments.aggregate(total=Sum('amount'))['total'] or 0
+        revenue_today = successful_payments.filter(created_at__date=today).aggregate(total=Sum('amount'))['total'] or 0
+        revenue_this_week = successful_payments.filter(created_at__date__gte=week_start).aggregate(total=Sum('amount'))['total'] or 0
+        revenue_this_month = successful_payments.filter(created_at__date__gte=month_start).aggregate(total=Sum('amount'))['total'] or 0
+        
+        # Professional Statistics
+        pending_verifications = professional_qs.filter(is_verified=False, is_active=True).count()
+        verified_professionals = professional_qs.filter(is_verified=True).count()
+        active_professionals = professional_qs.filter(is_active=True).count()
+        
+        # System Statistics
+        total_services = service_qs.count()
+        total_categories = Category.objects.filter(is_active=True)
+        total_regions = Region.objects.filter(is_active=True).count()
+        open_support_tickets = SupportTicket.objects.filter(status__in=['open', 'in_progress']).count()
+        unresolved_alerts = SystemAlert.objects.filter(is_resolved=False).count()
+        
+        if region:
+            total_categories = total_categories.filter(region=region)
+        total_categories = total_categories.count()
+        
+        # Growth Calculations
+        prev_week_users = user_qs.filter(
+            date_joined__date__gte=prev_week_start,
+            date_joined__date__lt=week_start
+        ).count()
+        prev_week_bookings = booking_qs.filter(
+            created_at__date__gte=prev_week_start,
+            created_at__date__lt=week_start
+        ).count()
+        prev_week_revenue = successful_payments.filter(
+            created_at__date__gte=prev_week_start,
+            created_at__date__lt=week_start
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        
+        # Calculate growth rates
+        user_growth_rate = ((new_users_this_week - prev_week_users) / max(prev_week_users, 1)) * 100
+        booking_growth_rate = ((bookings_this_week - prev_week_bookings) / max(prev_week_bookings, 1)) * 100
+        revenue_growth_rate = ((float(revenue_this_week) - float(prev_week_revenue)) / max(float(prev_week_revenue), 1)) * 100
+        
+        # Paginated data
         service_qs = service_qs.order_by('-created_at')
         addon_qs = addon_qs.order_by('-created_at')
         service_paginator = LargeResultsSetPagination()
@@ -70,7 +152,38 @@ class AdminDashboardView(generics.GenericAPIView):
         paginated_addons = addon_paginator.paginate_queryset(addon_qs, request)
         services_data = AdminServiceSerializer(paginated_services, many=True).data
         addons_data = AdminAddOnSerializer(paginated_addons, many=True).data
+        
         return Response({
+            # Statistics
+            'total_users': total_users,
+            'total_customers': total_customers,
+            'total_professionals': total_professionals,
+            'new_users_today': new_users_today,
+            'new_users_this_week': new_users_this_week,
+            'new_users_this_month': new_users_this_month,
+            'total_bookings': total_bookings,
+            'bookings_today': bookings_today,
+            'bookings_this_week': bookings_this_week,
+            'bookings_this_month': bookings_this_month,
+            'pending_bookings': pending_bookings,
+            'confirmed_bookings': confirmed_bookings,
+            'completed_bookings': completed_bookings,
+            'total_revenue': total_revenue,
+            'revenue_today': revenue_today,
+            'revenue_this_week': revenue_this_week,
+            'revenue_this_month': revenue_this_month,
+            'pending_verifications': pending_verifications,
+            'verified_professionals': verified_professionals,
+            'active_professionals': active_professionals,
+            'total_services': total_services,
+            'total_categories': total_categories,
+            'total_regions': total_regions,
+            'open_support_tickets': open_support_tickets,
+            'unresolved_alerts': unresolved_alerts,
+            'user_growth_rate': round(user_growth_rate, 2),
+            'booking_growth_rate': round(booking_growth_rate, 2),
+            'revenue_growth_rate': round(revenue_growth_rate, 2),
+            # Paginated data
             'services': services_data,
             'addons': addons_data,
             'services_count': service_qs.count(),
