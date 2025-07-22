@@ -59,14 +59,17 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
     total_spent = serializers.SerializerMethodField()
     last_activity = serializers.DateTimeField(source='last_login', read_only=True)
     current_region_name = serializers.CharField(source='current_region.name', read_only=True)
+    profile_picture = serializers.ImageField(read_only=True)
+    date_of_birth = serializers.DateField(read_only=True)
+    gender = serializers.CharField(read_only=True)
     
     class Meta:
         model = User
         fields = [
             'id', 'uid', 'first_name', 'last_name', 'email', 'username',
             'user_type', 'phone_number', 'current_region', 'current_region_name',
-            'is_active', 'is_verified', 'profile_completed', 'date_joined',
-            'last_login', 'last_activity', 'total_bookings', 'total_spent'
+            'is_active', 'is_verified', 'profile_completed', 'date_of_birth', 'gender', 'profile_picture',
+            'date_joined', 'last_login', 'last_activity', 'total_bookings', 'total_spent'
         ]
     
     def get_total_bookings(self, obj):
