@@ -7,6 +7,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from rest_framework.parsers import MultiPartParser, FormParser
+from .serializers import VideoUploadSerializer
 
 from .models import Category, Service, AddOn
 from .serializers import (
@@ -244,6 +246,21 @@ class ServiceReviewsView(generics.ListAPIView):
         return Service.objects.get(id=service_id).reviews.filter(
             is_published=True
         ).select_related('user').order_by('-created_at')
+
+
+class VideoUploadView(generics.ListCreateAPIView):
+    serializer_class = VideoUploadSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_queryset(self):
+        # Placeholder: return empty queryset or implement video model if needed
+        return []
+
+    def perform_create(self, serializer):
+        # Handle file saving logic here
+        # For now, just pass (or implement actual save logic)
+        pass
 
 
 @api_view(['GET'])

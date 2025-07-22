@@ -191,3 +191,9 @@ class ServiceReviewSerializer(serializers.ModelSerializer):
             'id', 'user_name', 'rating', 'comment', 'is_verified',
             'created_at'
         ]
+
+
+class VideoUploadSerializer(serializers.Serializer):
+    video = serializers.FileField()
+    title = serializers.CharField(required=False, max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True)
