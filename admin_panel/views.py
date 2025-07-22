@@ -115,6 +115,7 @@ class AdminDashboardView(generics.GenericAPIView):
         
         # System Statistics
         total_services = service_qs.count()
+        total_addons = addon_qs.count()
         total_categories = Category.objects.filter(is_active=True)
         total_regions = Region.objects.filter(is_active=True).count()
         open_support_tickets = SupportTicket.objects.filter(status__in=['open', 'in_progress']).count()
@@ -176,6 +177,7 @@ class AdminDashboardView(generics.GenericAPIView):
             'verified_professionals': verified_professionals,
             'active_professionals': active_professionals,
             'total_services': total_services,
+            'total_addons': total_addons,
             'total_categories': total_categories,
             'total_regions': total_regions,
             'open_support_tickets': open_support_tickets,
