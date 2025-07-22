@@ -381,12 +381,12 @@ class AdminAddOnListView(generics.ListCreateAPIView):
     serializer_class = AdminAddOnSerializer
     permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['category', 'category__region', 'is_active']
+    filterset_fields = ['categories', 'region', 'is_active']
     search_fields = ['name', 'description']
-    ordering = ['category__name', 'name']
+    ordering = ['name']
     
     def get_queryset(self):
-        return AddOn.objects.select_related('category__region')
+        return AddOn.objects.prefetch_related('categories', 'region')
 
 
 class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -395,7 +395,7 @@ class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     serializer_class = AdminAddOnSerializer
     permission_classes = [IsAdminUser]
-    queryset = AddOn.objects.all()
+    queryset = AddOn.objects.prefetch_related('categories', 'region')
 
 
 # ===================== BOOKING MANAGEMENT =====================

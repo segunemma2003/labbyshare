@@ -8,27 +8,47 @@ class CategorySerializer(serializers.ModelSerializer):
     Category serializer for services
     """
     services_count = serializers.SerializerMethodField()
+    addons = serializers.SerializerMethodField()
     
     class Meta:
         model = Category
         fields = [
             'id', 'name', 'description', 'icon', 'sort_order', 
-            'services_count', 'slug'
+            'services_count', 'slug', 'addons'
         ]
     
     def get_services_count(self, obj):
         return obj.services.filter(is_active=True).count()
+
+    def get_addons(self, obj):
+        return AddOnSerializer(obj.addons.filter(is_active=True), many=True).data
 
 
 class AddOnSerializer(serializers.ModelSerializer):
     """
     Service add-on serializer
     """
+    region = serializers.StringRelatedField()
+    categories = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     class Meta:
         model = AddOn
         fields = [
             'id', 'name', 'description', 'price', 'duration_minutes',
-            'max_quantity'
+            'max_quantity', 'region', 'categories', 'is_active', 'created_at', 'updated_at'
+        ]
+
+
+class AddOnListSerializer(serializers.ModelSerializer):
+    """
+    Service add-on list serializer (lightweight for listings)
+    """
+    region = serializers.StringRelatedField()
+    categories = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    class Meta:
+        model = AddOn
+        fields = [
+            'id', 'name', 'description', 'price', 'duration_minutes',
+            'max_quantity', 'region', 'categories', 'is_active', 'created_at', 'updated_at'
         ]
 
 

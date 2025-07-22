@@ -260,16 +260,19 @@ class AdminAddOnSerializer(serializers.ModelSerializer):
     """
     Add-on management by admin
     """
-    category_name = serializers.CharField(source='category.name', read_only=True)
-    region_name = serializers.CharField(source='category.region.name', read_only=True)
+    categories_names = serializers.SerializerMethodField()
+    region_name = serializers.CharField(source='region.name', read_only=True)
     
     class Meta:
         model = AddOn
         fields = [
-            'id', 'name', 'description', 'category', 'category_name', 'region_name',
+            'id', 'name', 'description', 'categories', 'categories_names', 'region', 'region_name',
             'price', 'duration_minutes', 'is_active', 'max_quantity',
             'created_at', 'updated_at'
         ]
+    
+    def get_categories_names(self, obj):
+        return [cat.name for cat in obj.categories.all()]
 
 
 # ===================== BOOKING MANAGEMENT SERIALIZERS =====================

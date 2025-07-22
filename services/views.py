@@ -11,8 +11,29 @@ from drf_yasg import openapi
 from .models import Category, Service, AddOn
 from .serializers import (
     CategorySerializer, ServiceListSerializer, ServiceDetailSerializer,
-    AddOnSerializer, ServiceReviewSerializer
+    AddOnSerializer, AddOnListSerializer, ServiceReviewSerializer
 )
+
+
+class AddOnListView(generics.ListAPIView):
+    """
+    List all add-ons for the current region (not category-specific)
+    """
+    serializer_class = AddOnListSerializer
+    permission_classes = [permissions.AllowAny]
+    
+    @swagger_auto_schema(
+        operation_description="Get all add-ons for current region",
+        responses={200: AddOnListSerializer(many=True)}
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
+    def get_queryset(self):
+        region = getattr(self.request, 'region', None)
+        if not region:
+            return AddOn.objects.none()
+        return AddOn.objects.filter(region=region, is_active=True)
 
 
 class CategoryListView(generics.ListAPIView):
@@ -57,6 +78,11 @@ class CategoryListView(generics.ListAPIView):
         cache.set(cache_key, queryset, settings.CACHE_TIMEOUTS['CATEGORIES'])
         
         return queryset
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['include_addons'] = True
+        return context
 
 
 class ServiceListView(generics.ListAPIView):
@@ -196,11 +222,7 @@ class CategoryAddOnsView(generics.ListAPIView):
         if not region:
             return AddOn.objects.none()
         
-        return AddOn.objects.filter(
-            category_id=category_id,
-            category__region=region,
-            is_active=True
-        ).order_by('name')
+        return AddOn.objects.filter(categories__id=category_id, region=region, is_active=True).order_by('name')
 
 
 class ServiceReviewsView(generics.ListAPIView):
