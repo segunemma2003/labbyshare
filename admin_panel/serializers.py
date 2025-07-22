@@ -198,17 +198,31 @@ class AdminCategorySerializer(serializers.ModelSerializer):
     Category management by admin
     """
     services_count = serializers.SerializerMethodField()
-    
+    addons = serializers.PrimaryKeyRelatedField(queryset=AddOn.objects.all(), many=True, required=False, write_only=True)
+    addons_details = serializers.SerializerMethodField(read_only=True)
     class Meta:
         model = Category
         fields = [
             'id', 'name', 'description', 'icon', 'region', 'is_active',
             'sort_order', 'slug', 'meta_description', 'services_count',
-            'created_at', 'updated_at'
+            'addons', 'addons_details', 'created_at', 'updated_at'
         ]
-    
     def get_services_count(self, obj):
         return obj.services.filter(is_active=True).count()
+    def get_addons_details(self, obj):
+        return AdminAddOnSerializer(obj.addons.all(), many=True).data
+    def create(self, validated_data):
+        addons = validated_data.pop('addons', [])
+        category = super().create(validated_data)
+        if addons:
+            category.addons.set(addons)
+        return category
+    def update(self, instance, validated_data):
+        addons = validated_data.pop('addons', None)
+        category = super().update(instance, validated_data)
+        if addons is not None:
+            category.addons.set(addons)
+        return category
 
 
 # ===================== SERVICE MANAGEMENT SERIALIZERS =====================
