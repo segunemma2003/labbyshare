@@ -20,12 +20,14 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
     Create user by admin
     """
     password = serializers.CharField(write_only=True, validators=[validate_password])
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
     
     class Meta:
         model = User
         fields = [
             'first_name', 'last_name', 'email', 'password', 'user_type',
-            'phone_number', 'current_region', 'is_active', 'is_verified'
+            'phone_number', 'current_region', 'is_active', 'is_verified',
+            'date_of_birth', 'gender', 'profile_picture'
         ]
     
     def create(self, validated_data):
@@ -43,11 +45,13 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
     """
     Update user by admin
     """
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
     class Meta:
         model = User
         fields = [
             'first_name', 'last_name', 'email', 'user_type', 'phone_number',
-            'current_region', 'is_active', 'is_verified', 'profile_completed'
+            'current_region', 'is_active', 'is_verified', 'profile_completed',
+            'date_of_birth', 'gender', 'profile_picture'
         ]
 
 
@@ -486,14 +490,26 @@ class AdminNotificationSerializer(serializers.ModelSerializer):
     """
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
+    sender = serializers.SerializerMethodField()
     
     class Meta:
         model = Notification
         fields = [
             'notification_id', 'user', 'user_name', 'user_email',
+            'sender',
             'notification_type', 'title', 'message', 'is_read',
             'push_sent', 'email_sent', 'created_at'
         ]
+    def get_sender(self, obj):
+        sender = getattr(obj, 'sender', None)
+        if sender:
+            return {
+                'id': sender.id,
+                'name': sender.get_full_name(),
+                'email': sender.email,
+                'profile_picture': sender.profile_picture.url if sender.profile_picture else None
+            }
+        return None
 
 
 class BroadcastNotificationSerializer(serializers.Serializer):
