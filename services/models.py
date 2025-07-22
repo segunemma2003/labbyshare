@@ -66,7 +66,8 @@ class Category(models.Model):
         ordering = ['sort_order', 'name']
     
     def __str__(self):
-        return f"{self.name} - {self.region.code}"
+        region_code = self.region.code if self.region else "No Region"
+        return f"{self.name} - {region_code}"
     
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -152,7 +153,8 @@ class Service(models.Model):
         ordering = ['sort_order', 'name']
     
     def __str__(self):
-        return f"{self.name} - {self.category.name}"
+        region_code = self.category.region.code if self.category and self.category.region else "No Region"
+        return f"{self.name} - {self.category.name} - {region_code}"
     
     def get_regional_price(self, region):
         """Get price for specific region"""
@@ -218,7 +220,8 @@ class RegionalPricing(models.Model):
         return self.price
     
     def __str__(self):
-        return f"{self.service.name} - {self.region.code}: {self.price}"
+        region_code = self.region.code if self.region else "No Region"
+        return f"{self.service.name} - {region_code}: {self.price}"
 
 
 class AddOn(models.Model):
@@ -255,7 +258,8 @@ class AddOn(models.Model):
         ordering = ['name']
 
     def __str__(self):
-        return f"{self.name} - {self.region.code}"
+        region_code = self.region.code if self.region else "No Region"
+        return f"{self.name} - {region_code}"
 
 
 class ServiceImage(models.Model):
@@ -280,7 +284,8 @@ class ServiceImage(models.Model):
         ordering = ['sort_order']
     
     def __str__(self):
-        return f"Image for {self.service.name}"
+        service_name = self.service.name if self.service else "No Service"
+        return f"Image for {service_name}"
 
 
 class ServiceReview(models.Model):

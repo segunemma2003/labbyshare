@@ -318,7 +318,7 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     """
     customer_name = serializers.CharField(source='customer.get_full_name', read_only=True)
     customer_email = serializers.CharField(source='customer.email', read_only=True)
-    professional_name = serializers.CharField(source='professional.user.get_full_name', read_only=True)
+    professional = serializers.SerializerMethodField()
     service_name = serializers.CharField(source='service.name', read_only=True)
     region_name = serializers.CharField(source='region.name', read_only=True)
     
@@ -326,11 +326,21 @@ class AdminBookingSerializer(serializers.ModelSerializer):
         model = Booking
         fields = [
             'booking_id', 'customer', 'customer_name', 'customer_email',
-            'professional', 'professional_name', 'service', 'service_name',
+            'professional', 'service', 'service_name',
             'region', 'region_name', 'scheduled_date', 'scheduled_time',
             'duration_minutes', 'total_amount', 'status', 'payment_status',
-            'booking_for_self', 'recipient_name', 'customer_notes', 'created_at'  # Fixed: customer_notes instead of notes
+            'booking_for_self', 'recipient_name', 'customer_notes', 'created_at'
         ]
+    def get_professional(self, obj):
+        if obj.professional and obj.professional.user:
+            user = obj.professional.user
+            return {
+                'id': obj.professional.id,
+                'name': user.get_full_name(),
+                'email': user.email,
+                'profile_picture': user.profile_picture.url if user.profile_picture else None
+            }
+        return None
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
