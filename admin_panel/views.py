@@ -163,17 +163,17 @@ class AdminUserListView(generics.ListCreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        
         if response.status_code == 201:
-            # Log admin activity
+            user = User.objects.get(email=response.data['email'])
+            detail_data = AdminUserDetailSerializer(user).data
             AdminActivity.objects.create(
                 admin_user=request.user,
                 activity_type='user_action',
-                description=f"Created user: {response.data['email']}",
+                description=f"Created user: {user.email}",
                 target_model='User',
-                target_id=str(response.data['id'])
+                target_id=str(user.id)
             )
-        
+            return Response(detail_data, status=201)
         return response
 
 
