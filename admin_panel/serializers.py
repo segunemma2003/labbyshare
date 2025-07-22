@@ -12,6 +12,9 @@ from payments.models import Payment, SavedPaymentMethod
 from services.models import Category, Service, AddOn, RegionalPricing
 from regions.models import Region, RegionalSettings
 from notifications.models import Notification
+from bookings.serializers import (
+    BookingAddOnSerializer, ReviewSerializer, BookingRescheduleSerializer, BookingMessageSerializer
+)
 
 # ===================== USER MANAGEMENT SERIALIZERS =====================
 
@@ -184,31 +187,33 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email')
     phone_number = serializers.CharField(source='user.phone_number', required=False)
     user_is_active = serializers.BooleanField(source='user.is_active')
-    
+    regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
+    services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
     class Meta:
         model = Professional
         fields = [
             'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
-            'travel_radius_km', 'min_booking_notice_hours', 'commission_rate'
+            'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
+            'regions', 'services'
         ]
-    
     def update(self, instance, validated_data):
         user_data = {}
         if 'user' in validated_data:
             user_data = validated_data.pop('user')
-        
-        # Update user fields
         if user_data:
             for field, value in user_data.items():
                 setattr(instance.user, field, value)
             instance.user.save()
-        
-        # Update professional fields
+        regions = validated_data.pop('regions', None)
+        services = validated_data.pop('services', None)
         for field, value in validated_data.items():
             setattr(instance, field, value)
-        
         instance.save()
+        if regions is not None:
+            instance.regions.set(regions)
+        if services is not None:
+            instance.services.set(services)
         return instance
 
 
@@ -321,6 +326,12 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     professional = serializers.SerializerMethodField()
     service_name = serializers.CharField(source='service.name', read_only=True)
     region_name = serializers.CharField(source='region.name', read_only=True)
+    recipient = serializers.SerializerMethodField()
+    selected_addons = BookingAddOnSerializer(many=True, read_only=True)
+    review = ReviewSerializer(read_only=True)
+    reschedule_requests = BookingRescheduleSerializer(many=True, read_only=True)
+    messages = BookingMessageSerializer(many=True, read_only=True)
+    status_history = serializers.SerializerMethodField()
     
     class Meta:
         model = Booking
@@ -329,7 +340,13 @@ class AdminBookingSerializer(serializers.ModelSerializer):
             'professional', 'service', 'service_name',
             'region', 'region_name', 'scheduled_date', 'scheduled_time',
             'duration_minutes', 'total_amount', 'status', 'payment_status',
-            'booking_for_self', 'recipient_name', 'customer_notes', 'created_at'
+            'booking_for_self', 'recipient', 'customer_notes', 'professional_notes', 'admin_notes',
+            'address_line1', 'address_line2', 'city', 'postal_code', 'location_notes',
+            'base_amount', 'addon_amount', 'discount_amount', 'tax_amount',
+            'deposit_required', 'deposit_percentage', 'deposit_amount',
+            'cancelled_by', 'cancelled_at', 'cancellation_reason',
+            'created_at', 'updated_at', 'confirmed_at', 'completed_at',
+            'selected_addons', 'review', 'reschedule_requests', 'messages', 'status_history'
         ]
     def get_professional(self, obj):
         if obj.professional and obj.professional.user:
@@ -341,6 +358,25 @@ class AdminBookingSerializer(serializers.ModelSerializer):
                 'profile_picture': user.profile_picture.url if user.profile_picture else None
             }
         return None
+    def get_recipient(self, obj):
+        if not obj.booking_for_self:
+            return {
+                'name': obj.recipient_name,
+                'phone': obj.recipient_phone,
+                'email': obj.recipient_email
+            }
+        return None
+    def get_status_history(self, obj):
+        return [
+            {
+                'previous_status': h.previous_status,
+                'new_status': h.new_status,
+                'changed_by': h.changed_by.get_full_name() if h.changed_by else None,
+                'reason': h.reason,
+                'created_at': h.created_at
+            }
+            for h in obj.status_history.all().order_by('-created_at')
+        ]
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
