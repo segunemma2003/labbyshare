@@ -247,16 +247,17 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        
         if response.status_code == 201:
+            professional = Professional.objects.get(id=response.data['id'])
+            detail_data = AdminProfessionalDetailSerializer(professional).data
             AdminActivity.objects.create(
                 admin_user=request.user,
                 activity_type='professional_verification',
                 description=f"Created professional: {request.data['email']}",
                 target_model='Professional',
-                target_id=str(response.data['id'])
+                target_id=str(professional.id)
             )
-        
+            return Response(detail_data, status=201)
         return response
 
 
@@ -297,16 +298,17 @@ class AdminCategoryListView(generics.ListCreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        
         if response.status_code == 201:
+            category = Category.objects.get(id=response.data['id'])
+            detail_data = AdminCategorySerializer(category).data
             AdminActivity.objects.create(
                 admin_user=request.user,
                 activity_type='content_moderation',
                 description=f"Created category: {response.data['name']}",
                 target_model='Category',
-                target_id=str(response.data['id'])
+                target_id=str(category.id)
             )
-        
+            return Response(detail_data, status=201)
         return response
 
 
@@ -335,6 +337,20 @@ class AdminServiceListView(generics.ListCreateAPIView):
     
     def get_queryset(self):
         return Service.objects.select_related('category__region').prefetch_related('professionals')
+
+    @swagger_auto_schema(
+        operation_description="Create new service (admin)",
+        request_body=AdminServiceSerializer,
+        responses={201: AdminServiceSerializer()}
+    )
+    def post(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        if response.status_code == 201:
+            service = Service.objects.get(id=response.data['id'])
+            detail_data = AdminServiceSerializer(service).data
+            # Optionally log activity here
+            return Response(detail_data, status=201)
+        return response
 
 
 class AdminServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
