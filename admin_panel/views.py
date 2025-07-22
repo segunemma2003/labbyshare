@@ -9,6 +9,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from rest_framework.pagination import PageNumberPagination
 
 from .models import AdminActivity, SystemAlert, SupportTicket
 from .serializers import *
@@ -25,114 +26,56 @@ from utils.permissions import IsAdminUser
 
 # ===================== DASHBOARD & ANALYTICS =====================
 
+class LargeResultsSetPagination(PageNumberPagination):
+    page_size = 500
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+def get_requested_region(request):
+    region_id = request.query_params.get('region')
+    if not region_id:
+        region_code = request.headers.get('X-Region')
+        if region_code:
+            from regions.models import Region
+            try:
+                return Region.objects.get(code=region_code)
+            except Region.DoesNotExist:
+                return None
+        return None
+    from regions.models import Region
+    try:
+        return Region.objects.get(id=region_id)
+    except Region.DoesNotExist:
+        return None
+
 class AdminDashboardView(generics.GenericAPIView):
-    """
-    Comprehensive admin dashboard with detailed metrics
-    """
     permission_classes = [IsAdminUser]
     
     @swagger_auto_schema(
-        operation_description="Get comprehensive admin dashboard statistics",
-        responses={200: AdminDashboardStatsSerializer()}
+        operation_description="Get paginated services and addons for admin dashboard (filtered by region if provided)",
+        responses={200: 'Paginated services and addons'}
     )
     def get(self, request):
-        today = timezone.now().date()
-        week_start = today - timedelta(days=today.weekday())
-        month_start = today.replace(day=1)
-        
-        # Calculate previous periods for growth
-        prev_week_start = week_start - timedelta(days=7)
-        prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
-        
-        # User Statistics
-        total_users = User.objects.count()
-        total_customers = User.objects.filter(user_type='customer').count()
-        total_professionals = Professional.objects.count()
-        
-        new_users_today = User.objects.filter(date_joined__date=today).count()
-        new_users_this_week = User.objects.filter(date_joined__date__gte=week_start).count()
-        new_users_this_month = User.objects.filter(date_joined__date__gte=month_start).count()
-        
-        # Booking Statistics
-        total_bookings = Booking.objects.count()
-        bookings_today = Booking.objects.filter(created_at__date=today).count()
-        bookings_this_week = Booking.objects.filter(created_at__date__gte=week_start).count()
-        bookings_this_month = Booking.objects.filter(created_at__date__gte=month_start).count()
-        
-        pending_bookings = Booking.objects.filter(status='pending').count()
-        confirmed_bookings = Booking.objects.filter(status='confirmed').count()
-        completed_bookings = Booking.objects.filter(status='completed').count()
-        
-        # Revenue Statistics
-        successful_payments = Payment.objects.filter(status='succeeded')
-        total_revenue = successful_payments.aggregate(total=Sum('amount'))['total'] or 0
-        revenue_today = successful_payments.filter(created_at__date=today).aggregate(total=Sum('amount'))['total'] or 0
-        revenue_this_week = successful_payments.filter(created_at__date__gte=week_start).aggregate(total=Sum('amount'))['total'] or 0
-        revenue_this_month = successful_payments.filter(created_at__date__gte=month_start).aggregate(total=Sum('amount'))['total'] or 0
-        
-        # Professional Statistics
-        pending_verifications = Professional.objects.filter(is_verified=False, is_active=True).count()
-        verified_professionals = Professional.objects.filter(is_verified=True).count()
-        active_professionals = Professional.objects.filter(is_active=True).count()
-        
-        # System Statistics
-        total_services = Service.objects.filter(is_active=True).count()
-        total_categories = Category.objects.filter(is_active=True).count()
-        total_regions = Region.objects.filter(is_active=True).count()
-        open_support_tickets = SupportTicket.objects.filter(status__in=['open', 'in_progress']).count()
-        unresolved_alerts = SystemAlert.objects.filter(is_resolved=False).count()
-        
-        # Growth Calculations
-        prev_week_users = User.objects.filter(
-            date_joined__date__gte=prev_week_start,
-            date_joined__date__lt=week_start
-        ).count()
-        prev_week_bookings = Booking.objects.filter(
-            created_at__date__gte=prev_week_start,
-            created_at__date__lt=week_start
-        ).count()
-        prev_week_revenue = successful_payments.filter(
-            created_at__date__gte=prev_week_start,
-            created_at__date__lt=week_start
-        ).aggregate(total=Sum('amount'))['total'] or 0
-        
-        # Calculate growth rates
-        user_growth_rate = ((new_users_this_week - prev_week_users) / max(prev_week_users, 1)) * 100
-        booking_growth_rate = ((bookings_this_week - prev_week_bookings) / max(prev_week_bookings, 1)) * 100
-        revenue_growth_rate = ((float(revenue_this_week) - float(prev_week_revenue)) / max(float(prev_week_revenue), 1)) * 100
-        
-        stats = {
-            'total_users': total_users,
-            'total_customers': total_customers,
-            'total_professionals': total_professionals,
-            'new_users_today': new_users_today,
-            'new_users_this_week': new_users_this_week,
-            'new_users_this_month': new_users_this_month,
-            'total_bookings': total_bookings,
-            'bookings_today': bookings_today,
-            'bookings_this_week': bookings_this_week,
-            'bookings_this_month': bookings_this_month,
-            'pending_bookings': pending_bookings,
-            'confirmed_bookings': confirmed_bookings,
-            'completed_bookings': completed_bookings,
-            'total_revenue': total_revenue,
-            'revenue_today': revenue_today,
-            'revenue_this_week': revenue_this_week,
-            'revenue_this_month': revenue_this_month,
-            'pending_verifications': pending_verifications,
-            'verified_professionals': verified_professionals,
-            'active_professionals': active_professionals,
-            'total_services': total_services,
-            'total_categories': total_categories,
-            'total_regions': total_regions,
-            'open_support_tickets': open_support_tickets,
-            'unresolved_alerts': unresolved_alerts,
-            'user_growth_rate': round(user_growth_rate, 2),
-            'booking_growth_rate': round(booking_growth_rate, 2),
-            'revenue_growth_rate': round(revenue_growth_rate, 2),
-        }
-        
-        return Response(stats)
+        region = get_requested_region(request)
+        service_qs = Service.objects.filter(is_active=True)
+        addon_qs = AddOn.objects.filter(is_active=True)
+        if region:
+            service_qs = service_qs.filter(category__region=region)
+            addon_qs = addon_qs.filter(region=region)
+        service_qs = service_qs.order_by('-created_at')
+        addon_qs = addon_qs.order_by('-created_at')
+        service_paginator = LargeResultsSetPagination()
+        addon_paginator = LargeResultsSetPagination()
+        paginated_services = service_paginator.paginate_queryset(service_qs, request)
+        paginated_addons = addon_paginator.paginate_queryset(addon_qs, request)
+        services_data = AdminServiceSerializer(paginated_services, many=True).data
+        addons_data = AdminAddOnSerializer(paginated_addons, many=True).data
+        return Response({
+            'services': services_data,
+            'addons': addons_data,
+            'services_count': service_qs.count(),
+            'addons_count': addon_qs.count(),
+        })
 
 
 # ===================== USER MANAGEMENT =====================
@@ -149,7 +92,11 @@ class AdminUserListView(generics.ListCreateAPIView):
     ordering = ['-date_joined']
     
     def get_queryset(self):
-        return User.objects.select_related('current_region').prefetch_related('bookings', 'payments')
+        region = get_requested_region(self.request)
+        qs = User.objects.select_related('current_region').prefetch_related('bookings', 'payments')
+        if region:
+            qs = qs.filter(current_region=region)
+        return qs
     
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -233,7 +180,11 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        return Professional.objects.select_related('user').prefetch_related('regions', 'services')
+        region = get_requested_region(self.request)
+        qs = Professional.objects.select_related('user').prefetch_related('regions', 'services')
+        if region:
+            qs = qs.filter(regions=region)
+        return qs
     
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -402,7 +353,11 @@ class AdminAddOnListView(generics.ListCreateAPIView):
     ordering = ['name']
     
     def get_queryset(self):
-        return AddOn.objects.prefetch_related('categories', 'region')
+        region = get_requested_region(self.request)
+        qs = AddOn.objects.prefetch_related('categories', 'region')
+        if region:
+            qs = qs.filter(region=region)
+        return qs
 
 
 class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -429,9 +384,13 @@ class AdminBookingListView(generics.ListAPIView):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        return Booking.objects.select_related(
+        region = get_requested_region(self.request)
+        qs = Booking.objects.select_related(
             'customer', 'professional__user', 'service', 'region'
         )
+        if region:
+            qs = qs.filter(region=region)
+        return qs
 
 
 class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
