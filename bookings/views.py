@@ -268,14 +268,16 @@ class BookingCreateView(generics.CreateAPIView):
         
         # Send notifications
         try:
-            from notifications.tasks import send_booking_notification
+            from notifications.tasks import send_booking_notification, send_admin_booking_email
             send_booking_notification.delay(
                 booking.id, 
                 'booking_created',
                 [booking.customer.id, booking.professional.user.id]
             )
+            # Send admin email
+            send_admin_booking_email.delay(booking.id)
         except Exception as e:
-            logger.error(f"Failed to send booking notification: {str(e)}")
+            logger.error(f"Failed to send booking notification or admin email: {str(e)}")
 
 
 

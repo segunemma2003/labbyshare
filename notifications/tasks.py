@@ -338,3 +338,50 @@ def send_admin_notification(notification_type, message, data=None):
     except Exception as exc:
         logger.error(f"Failed to send admin notification: {str(exc)}")
 
+
+@shared_task(bind=True, max_retries=3)
+def send_admin_booking_email(self, booking_id):
+    """
+    Send an email to info@thehairspaclinic.com with booking details when a new booking is made.
+    """
+    try:
+        from bookings.models import Booking
+        booking = Booking.objects.select_related('customer', 'professional__user', 'service', 'region').get(id=booking_id)
+        subject = f"New Booking: {booking.service.name} on {booking.scheduled_date}"
+        context = {
+            'booking': booking,
+            'customer': booking.customer,
+            'professional': booking.professional,
+            'service': booking.service,
+            'region': booking.region,
+        }
+        # Try to use a template, fallback to plain text
+        try:
+            html_message = render_to_string('emails/admin_new_booking.html', context)
+            message = ''
+        except Exception:
+            html_message = None
+            message = f"New booking details:\n" \
+                f"Service: {booking.service.name}\n" \
+                f"Professional: {booking.professional.user.get_full_name()}\n" \
+                f"Customer: {booking.customer.get_full_name()} ({booking.customer.email})\n" \
+                f"Date: {booking.scheduled_date} {booking.scheduled_time}\n" \
+                f"Region: {booking.region.name}\n" \
+                f"Total Amount: {booking.total_amount}\n" \
+                f"Notes: {booking.customer_notes}"
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=["info@thehairspaclinic.com"],
+            html_message=html_message,
+            fail_silently=False
+        )
+        logger.info(f"Admin booking email sent for booking {booking.booking_id}")
+        return True
+    except Exception as exc:
+        logger.error(f"Failed to send admin booking email: {str(exc)}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        return False
+
