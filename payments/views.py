@@ -15,6 +15,7 @@ from decimal import Decimal
 import stripe
 import json
 import logging
+import os
 
 from .models import Payment, SavedPaymentMethod, PaymentRefund
 from .serializers import (
@@ -27,6 +28,17 @@ from .services import StripePaymentService
 from bookings.models import Booking
 
 logger = logging.getLogger(__name__)
+
+# Set up a dedicated logger for Stripe webhooks
+stripe_webhook_logger = logging.getLogger('stripe_webhook')
+if not stripe_webhook_logger.handlers:
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    handler = logging.FileHandler(os.path.join(log_dir, 'stripe_webhooks.log'))
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    handler.setFormatter(formatter)
+    stripe_webhook_logger.addHandler(handler)
+    stripe_webhook_logger.setLevel(logging.INFO)
 
 
 class PaymentListView(generics.ListAPIView):
@@ -538,7 +550,13 @@ def stripe_webhook(request):
     """
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
-    
+
+    # Log every incoming webhook attempt (raw, before verification)
+    try:
+        stripe_webhook_logger.info(f"Received webhook: headers={dict(request.headers)}, body={payload.decode('utf-8', errors='replace')}")
+    except Exception as e:
+        logger.error(f"Failed to log incoming webhook: {str(e)}")
+
     try:
         # Verify webhook signature
         event = stripe.Webhook.construct_event(
