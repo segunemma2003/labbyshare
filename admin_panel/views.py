@@ -271,14 +271,54 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
         return response
     
     def perform_destroy(self, instance):
-        AdminActivity.objects.create(
-            admin_user=self.request.user,
-            activity_type='user_action',
-            description=f"Deleted user: {instance.email}",
-            target_model='User',
-            target_id=str(instance.id)
-        )
-        instance.delete()
+        try:
+            # Log the deletion attempt
+            AdminActivity.objects.create(
+                admin_user=self.request.user,
+                activity_type='user_action',
+                description=f"Attempting to delete user: {instance.email}",
+                target_model='User',
+                target_id=str(instance.id)
+            )
+            
+            # Check if user has related data that might prevent deletion
+            related_bookings = instance.bookings.count()
+            related_payments = instance.payments.count()
+            related_reviews = instance.reviews_given.count()
+            
+            if related_bookings > 0 or related_payments > 0 or related_reviews > 0:
+                # Log the related data
+                AdminActivity.objects.create(
+                    admin_user=self.request.user,
+                    activity_type='user_action',
+                    description=f"Cannot delete user {instance.email} - has {related_bookings} bookings, {related_payments} payments, {related_reviews} reviews",
+                    target_model='User',
+                    target_id=str(instance.id)
+                )
+                raise Exception(f"Cannot delete user with related data: {related_bookings} bookings, {related_payments} payments, {related_reviews} reviews")
+            
+            # Perform the actual deletion
+            instance.delete()
+            
+            # Log successful deletion
+            AdminActivity.objects.create(
+                admin_user=self.request.user,
+                activity_type='user_action',
+                description=f"Successfully deleted user: {instance.email}",
+                target_model='User',
+                target_id=str(instance.id)
+            )
+            
+        except Exception as e:
+            # Log the error
+            AdminActivity.objects.create(
+                admin_user=self.request.user,
+                activity_type='user_action',
+                description=f"Failed to delete user {instance.email}: {str(e)}",
+                target_model='User',
+                target_id=str(instance.id)
+            )
+            raise e
 
 
 # ===================== PROFESSIONAL MANAGEMENT =====================
