@@ -373,7 +373,7 @@ def send_admin_booking_email(self, booking_id):
             subject=subject,
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=["info@thehairspaclinic.com"],
+            recipient_list=["info@thehairspaclinic.com", "thebeautyspabyshea@gmail.com"],
             html_message=html_message,
             fail_silently=False
         )
