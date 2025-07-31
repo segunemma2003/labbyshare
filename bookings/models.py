@@ -524,6 +524,7 @@ class BookingMessage(models.Model):
 class BookingPicture(models.Model):
     """
     Pictures for bookings - before and after service completion
+    Only admins can upload these pictures during appointment updates
     """
     PICTURE_TYPE_CHOICES = [
         ('before', 'Before'),
@@ -538,11 +539,12 @@ class BookingPicture(models.Model):
     picture_type = models.CharField(
         max_length=10,
         choices=PICTURE_TYPE_CHOICES,
-        db_index=True
+        db_index=True,
+        help_text="Type of picture: before or after service"
     )
     image = models.ImageField(
         upload_to=booking_picture_upload_path,
-        help_text="Upload image file (JPEG, PNG, WebP)"
+        help_text="Upload image file (JPEG, PNG, WebP, max 10MB)"
     )
     caption = models.CharField(
         max_length=255,
@@ -554,12 +556,17 @@ class BookingPicture(models.Model):
     uploaded_by = models.ForeignKey(
         'accounts.User',
         on_delete=models.CASCADE,
-        related_name='uploaded_booking_pictures'
+        related_name='uploaded_booking_pictures',
+        help_text="Admin user who uploaded this picture"
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
     
-    # Image metadata (optional, can be populated automatically)
-    file_size = models.PositiveIntegerField(null=True, blank=True)  # in bytes
+    # Image metadata (automatically populated)
+    file_size = models.PositiveIntegerField(
+        null=True, 
+        blank=True,
+        help_text="File size in bytes"
+    )
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
     
@@ -571,11 +578,11 @@ class BookingPicture(models.Model):
         ]
         ordering = ['picture_type', 'uploaded_at']
         
-        # Ensure proper constraints for picture limits
+        # Prevent duplicate images for same booking
         constraints = [
             models.UniqueConstraint(
                 fields=['booking', 'picture_type', 'image'],
-                name='unique_booking_picture'
+                name='unique_booking_picture_per_type'
             )
         ]
     
@@ -583,22 +590,40 @@ class BookingPicture(models.Model):
         return f"{self.get_picture_type_display()} picture for {self.booking.booking_id}"
     
     def save(self, *args, **kwargs):
-        # Populate image metadata if not set
+        """Populate image metadata on save"""
         if self.image and not self.file_size:
             try:
+                # Get file size
                 self.file_size = self.image.size
-                # If PIL is available, get image dimensions
-                from PIL import Image
-                img = Image.open(self.image)
-                self.width, self.height = img.size
-            except (ImportError, Exception):
+                
+                # Try to get image dimensions if PIL is available
+                try:
+                    from PIL import Image
+                    img = Image.open(self.image)
+                    self.width, self.height = img.size
+                except ImportError:
+                    # PIL not available, skip dimensions
+                    pass
+            except Exception:
+                # If anything fails, just continue without metadata
                 pass
         
         super().save(*args, **kwargs)
     
     @property
     def file_size_mb(self):
-        """Get file size in MB"""
+        """Get file size in MB for display"""
         if self.file_size:
             return round(self.file_size / (1024 * 1024), 2)
         return None
+    
+    @classmethod
+    def get_picture_count(cls, booking, picture_type):
+        """Get count of pictures for a booking and type"""
+        return cls.objects.filter(booking=booking, picture_type=picture_type).count()
+    
+    @classmethod
+    def can_add_pictures(cls, booking, picture_type, count_to_add=1):
+        """Check if we can add more pictures without exceeding limit"""
+        current_count = cls.get_picture_count(booking, picture_type)
+        return (current_count + count_to_add) <= 6

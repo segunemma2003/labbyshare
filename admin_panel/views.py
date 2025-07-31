@@ -635,43 +635,46 @@ def update_booking_status(request):
 @permission_classes([IsAdminUser])
 @swagger_auto_schema(
     operation_description="Upload before/after pictures for booking (admin only)",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'booking_id': openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description='Booking UUID to add pictures to'
-            ),
-            'picture_type': openapi.Schema(
-                type=openapi.TYPE_STRING,
-                enum=['before', 'after'],
-                description='Type of pictures being uploaded'
-            ),
-            'images': openapi.Schema(
-                type=openapi.TYPE_ARRAY,
-                items=openapi.Schema(type=openapi.TYPE_FILE),
-                description='Image files to upload (1-6 images)',
-                minItems=1,
-                maxItems=6
-            ),
-            'captions': openapi.Schema(
-                type=openapi.TYPE_ARRAY,
-                items=openapi.Schema(type=openapi.TYPE_STRING),
-                description='Optional captions for images (must match number of images)',
-                required=False
-            ),
-        },
-        required=['booking_id', 'picture_type', 'images']
-    ),
+    manual_parameters=[
+        openapi.Parameter(
+            'booking_id',
+            openapi.IN_FORM,
+            description="Booking UUID to add pictures to",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+        openapi.Parameter(
+            'picture_type',
+            openapi.IN_FORM,
+            description="Type of pictures being uploaded",
+            type=openapi.TYPE_STRING,
+            enum=['before', 'after'],
+            required=True
+        ),
+        openapi.Parameter(
+            'images',
+            openapi.IN_FORM,
+            description="Image files to upload (1-6 images)",
+            type=openapi.TYPE_FILE,
+            required=True
+        ),
+        openapi.Parameter(
+            'captions',
+            openapi.IN_FORM,
+            description="Optional captions for images",
+            type=openapi.TYPE_STRING,
+            required=False
+        ),
+    ],
     responses={201: 'Pictures uploaded successfully'}
 )
 def upload_booking_pictures(request):
     """
     Upload before/after pictures for booking (admin only)
+    Accepts multiple image files and optional captions
     """
     try:
-        from .serializers import AdminBookingPictureUploadSerializer
-        from bookings.serializers import BookingPictureUploadSerializer
+        from bookings.serializers import BookingPictureUploadSerializer, BookingPictureSerializer
         
         # Extract data from request
         booking_id = request.data.get('booking_id')
@@ -679,16 +682,16 @@ def upload_booking_pictures(request):
         images = request.FILES.getlist('images')
         captions = request.data.getlist('captions') if 'captions' in request.data else []
         
-        # Validate input
+        # Validate required fields
         if not booking_id:
             return Response(
                 {'error': 'booking_id is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if not picture_type:
+        if not picture_type or picture_type not in ['before', 'after']:
             return Response(
-                {'error': 'picture_type is required'},
+                {'error': 'picture_type is required and must be "before" or "after"'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -709,30 +712,22 @@ def upload_booking_pictures(request):
         
         # Prepare data for serializer
         upload_data = {
+            'booking_id': booking_id,
             'picture_type': picture_type,
             'images': images,
             'captions': captions if captions else []
         }
         
         # Validate the upload
-        upload_serializer = BookingPictureUploadSerializer(data=upload_data)
-        if not upload_serializer.is_valid():
+        serializer = BookingPictureUploadSerializer(data=upload_data)
+        if not serializer.is_valid():
             return Response(
-                {'errors': upload_serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check picture limits
-        try:
-            upload_serializer.validate_booking_picture_limits(booking, picture_type)
-        except serializers.ValidationError as e:
-            return Response(
-                {'error': str(e)},
+                {'errors': serializer.errors},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Create the pictures
-        created_pictures = upload_serializer.create_pictures(booking, request.user)
+        created_pictures = serializer.create_pictures(serializer.validated_data, request.user)
         
         # Log admin activity
         AdminActivity.objects.create(
@@ -743,24 +738,25 @@ def upload_booking_pictures(request):
             target_id=str(booking.id),
             new_data={
                 'picture_type': picture_type,
-                'pictures_count': len(created_pictures)
+                'pictures_count': len(created_pictures),
+                'picture_ids': [p.id for p in created_pictures]
             }
         )
         
         # Return success response with created pictures
-        from bookings.serializers import BookingPictureSerializer
         picture_data = BookingPictureSerializer(created_pictures, many=True, context={'request': request}).data
         
         return Response({
             'message': f'Successfully uploaded {len(created_pictures)} {picture_type} picture(s)',
             'uploaded_pictures': picture_data,
-            'booking_id': str(booking_id)
+            'booking_id': str(booking_id),
+            'picture_type': picture_type
         }, status=status.HTTP_201_CREATED)
         
     except Exception as e:
         logger.error(f"Error uploading booking pictures: {str(e)}")
         return Response(
-            {'error': 'Failed to upload pictures'},
+            {'error': 'Failed to upload pictures. Please try again.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

@@ -60,6 +60,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     # Before and after pictures
     before_pictures = serializers.SerializerMethodField()
     after_pictures = serializers.SerializerMethodField()
+    picture_counts = serializers.SerializerMethodField()
     
     class Meta:
         model = Booking
@@ -71,7 +72,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'base_amount', 'addon_amount', 'discount_amount', 'tax_amount', 'total_amount',
             'deposit_required', 'deposit_percentage', 'deposit_amount', 'status', 'payment_status',
             'customer_notes', 'professional_notes', 'selected_addons',
-            'before_pictures', 'after_pictures',
+            'before_pictures', 'after_pictures', 'picture_counts',
             'is_upcoming', 'can_be_cancelled', 'created_at', 'confirmed_at'
         ]
     
@@ -84,6 +85,16 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         """Get after pictures for the booking"""
         after_pics = obj.pictures.filter(picture_type='after').order_by('uploaded_at')
         return BookingPictureSerializer(after_pics, many=True, context=self.context).data
+    
+    def get_picture_counts(self, obj):
+        """Get picture counts for easy reference"""
+        before_count = obj.pictures.filter(picture_type='before').count()
+        after_count = obj.pictures.filter(picture_type='after').count()
+        return {
+            'before': before_count,
+            'after': after_count,
+            'total': before_count + after_count
+        }
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
@@ -465,21 +476,35 @@ class BookingMessageSerializer(serializers.ModelSerializer):
 
 class BookingPictureSerializer(serializers.ModelSerializer):
     """
-    Booking picture serializer for before/after images
+    Serializer for displaying booking pictures
     """
     uploaded_by_name = serializers.CharField(source='uploaded_by.get_full_name', read_only=True)
     file_size_mb = serializers.ReadOnlyField()
+    image_url = serializers.SerializerMethodField()
     
     class Meta:
         model = BookingPicture
         fields = [
-            'id', 'picture_type', 'image', 'caption', 'uploaded_by_name',
-            'uploaded_at', 'file_size', 'file_size_mb', 'width', 'height'
+            'id', 'picture_type', 'image', 'image_url', 'caption', 
+            'uploaded_by_name', 'uploaded_at', 'file_size', 'file_size_mb', 
+            'width', 'height'
         ]
-        read_only_fields = ['uploaded_by_name', 'uploaded_at', 'file_size', 'width', 'height']
+        read_only_fields = [
+            'uploaded_by_name', 'uploaded_at', 'file_size', 'file_size_mb',
+            'width', 'height', 'image_url'
+        ]
+    
+    def get_image_url(self, obj):
+        """Get full URL for the image"""
+        if obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
     
     def validate_image(self, value):
-        """Validate image file size and format"""
+        """Validate image file"""
         # Check file size (max 10MB)
         if value.size > 10 * 1024 * 1024:
             raise serializers.ValidationError("Image file size cannot exceed 10MB.")
@@ -496,29 +521,31 @@ class BookingPictureSerializer(serializers.ModelSerializer):
 
 class BookingPictureUploadSerializer(serializers.Serializer):
     """
-    Serializer for uploading multiple booking pictures
+    Serializer for uploading multiple booking pictures at once
     """
+    booking_id = serializers.UUIDField(help_text="UUID of the booking to add pictures to")
     picture_type = serializers.ChoiceField(
         choices=BookingPicture.PICTURE_TYPE_CHOICES,
-        help_text="Type of pictures being uploaded"
+        help_text="Type of pictures being uploaded (before or after)"
     )
     images = serializers.ListField(
         child=serializers.ImageField(),
         min_length=1,
         max_length=6,
-        help_text="Upload 1-6 images"
+        help_text="Upload 1-6 images at once"
     )
     captions = serializers.ListField(
-        child=serializers.CharField(max_length=255, required=False, allow_blank=True),
+        child=serializers.CharField(max_length=255, allow_blank=True),
         required=False,
         allow_empty=True,
         help_text="Optional captions for each image (must match number of images)"
     )
     
     def validate(self, data):
-        """Validate picture upload data"""
+        """Validate the upload data"""
         images = data.get('images', [])
         captions = data.get('captions', [])
+        booking_id = data.get('booking_id')
         picture_type = data.get('picture_type')
         
         # Validate image count
@@ -531,11 +558,26 @@ class BookingPictureUploadSerializer(serializers.Serializer):
                 "Number of captions must match number of images if captions are provided."
             )
         
-        # Validate each image
+        # Validate booking exists
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            raise serializers.ValidationError("Booking not found.")
+        
+        # Check if we can add these pictures without exceeding limit
+        if not BookingPicture.can_add_pictures(booking, picture_type, len(images)):
+            current_count = BookingPicture.get_picture_count(booking, picture_type)
+            raise serializers.ValidationError(
+                f"Cannot upload {len(images)} more {picture_type} pictures. "
+                f"This booking already has {current_count} {picture_type} pictures. "
+                f"Maximum allowed is 6 per type."
+            )
+        
+        # Validate each image individually
         for i, image in enumerate(images):
             # Check file size (max 10MB)
             if image.size > 10 * 1024 * 1024:
-                raise serializers.ValidationError(f"Image {i+1} file size cannot exceed 10MB.")
+                raise serializers.ValidationError(f"Image {i+1}: File size cannot exceed 10MB.")
             
             # Check file format
             allowed_formats = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
@@ -546,34 +588,14 @@ class BookingPictureUploadSerializer(serializers.Serializer):
         
         return data
     
-    def validate_booking_picture_limits(self, booking, picture_type):
-        """
-        Validate that adding these pictures won't exceed the limits
-        """
-        existing_count = BookingPicture.objects.filter(
-            booking=booking,
-            picture_type=picture_type
-        ).count()
-        
-        new_count = len(self.validated_data.get('images', []))
-        total_count = existing_count + new_count
-        
-        if total_count > 6:
-            raise serializers.ValidationError(
-                f"Cannot upload {new_count} more {picture_type} pictures. "
-                f"This booking already has {existing_count} {picture_type} pictures. "
-                f"Maximum allowed is 6 per type."
-            )
-        
-        return True
-    
-    def create_pictures(self, booking, uploaded_by):
+    def create_pictures(self, validated_data, uploaded_by):
         """
         Create BookingPicture instances from validated data
         """
-        images = self.validated_data['images']
-        captions = self.validated_data.get('captions', [])
-        picture_type = self.validated_data['picture_type']
+        booking = Booking.objects.get(booking_id=validated_data['booking_id'])
+        images = validated_data['images']
+        captions = validated_data.get('captions', [])
+        picture_type = validated_data['picture_type']
         
         created_pictures = []
         

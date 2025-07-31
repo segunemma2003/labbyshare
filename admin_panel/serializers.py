@@ -402,7 +402,9 @@ class AdminBookingSerializer(serializers.ModelSerializer):
         return {
             'before': before_count,
             'after': after_count,
-            'total': before_count + after_count
+            'total': before_count + after_count,
+            'can_add_before': 6 - before_count,
+            'can_add_after': 6 - after_count
         }
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
@@ -415,65 +417,6 @@ class AdminBookingUpdateSerializer(serializers.ModelSerializer):
             'status', 'payment_status', 'scheduled_date', 'scheduled_time',
             'professional_notes', 'admin_notes'  # Fixed: use correct field names
         ]
-
-
-class AdminBookingPictureUploadSerializer(serializers.Serializer):
-    """
-    Admin serializer for uploading booking pictures during appointment update
-    """
-    booking_id = serializers.UUIDField(help_text="Booking UUID to add pictures to")
-    picture_uploads = BookingPictureUploadSerializer(many=True, help_text="Picture upload data")
-    
-    def validate_booking_id(self, value):
-        """Validate that booking exists"""
-        try:
-            booking = Booking.objects.get(booking_id=value)
-            return value
-        except Booking.DoesNotExist:
-            raise serializers.ValidationError("Booking not found.")
-    
-    def validate(self, data):
-        """Cross-field validation"""
-        booking_id = data.get('booking_id')
-        picture_uploads = data.get('picture_uploads', [])
-        
-        if not picture_uploads:
-            raise serializers.ValidationError("At least one picture upload is required.")
-        
-        # Get the booking
-        booking = Booking.objects.get(booking_id=booking_id)
-        
-        # Validate picture limits for each upload type
-        for upload_data in picture_uploads:
-            serializer = BookingPictureUploadSerializer(data=upload_data)
-            if serializer.is_valid():
-                # Check picture limits
-                try:
-                    serializer.validate_booking_picture_limits(booking, upload_data['picture_type'])
-                except serializers.ValidationError as e:
-                    raise serializers.ValidationError({
-                        'picture_uploads': f"Picture limit validation failed for {upload_data['picture_type']}: {str(e)}"
-                    })
-            else:
-                raise serializers.ValidationError({'picture_uploads': serializer.errors})
-        
-        return data
-    
-    def create_booking_pictures(self, validated_data, uploaded_by):
-        """Create booking pictures from validated data"""
-        booking_id = validated_data['booking_id']
-        picture_uploads = validated_data['picture_uploads']
-        
-        booking = Booking.objects.get(booking_id=booking_id)
-        created_pictures = []
-        
-        for upload_data in picture_uploads:
-            upload_serializer = BookingPictureUploadSerializer(data=upload_data)
-            if upload_serializer.is_valid():
-                pictures = upload_serializer.create_pictures(booking, uploaded_by)
-                created_pictures.extend(pictures)
-        
-        return created_pictures
 
 # ===================== PAYMENT MANAGEMENT SERIALIZERS =====================
 
