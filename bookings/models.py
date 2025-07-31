@@ -3,6 +3,13 @@ from django.core.validators import MinValueValidator
 from django.utils import timezone
 from decimal import Decimal
 import uuid
+import os
+
+def booking_picture_upload_path(instance, filename):
+    """Generate upload path for booking pictures"""
+    ext = filename.split('.')[-1]
+    filename = f'{uuid.uuid4()}.{ext}'
+    return f'booking_pictures/{instance.booking.booking_id}/{instance.picture_type}/{filename}'
 
 
 class BookingManager(models.Manager):
@@ -512,3 +519,86 @@ class BookingMessage(models.Model):
     
     def __str__(self):
         return f"Message for {self.booking.booking_id} from {self.sender.get_full_name()}"
+
+
+class BookingPicture(models.Model):
+    """
+    Pictures for bookings - before and after service completion
+    """
+    PICTURE_TYPE_CHOICES = [
+        ('before', 'Before'),
+        ('after', 'After'),
+    ]
+    
+    booking = models.ForeignKey(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='pictures'
+    )
+    picture_type = models.CharField(
+        max_length=10,
+        choices=PICTURE_TYPE_CHOICES,
+        db_index=True
+    )
+    image = models.ImageField(
+        upload_to=booking_picture_upload_path,
+        help_text="Upload image file (JPEG, PNG, WebP)"
+    )
+    caption = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional caption for the picture"
+    )
+    
+    # Metadata
+    uploaded_by = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.CASCADE,
+        related_name='uploaded_booking_pictures'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    
+    # Image metadata (optional, can be populated automatically)
+    file_size = models.PositiveIntegerField(null=True, blank=True)  # in bytes
+    width = models.PositiveIntegerField(null=True, blank=True)
+    height = models.PositiveIntegerField(null=True, blank=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['booking', 'picture_type']),
+            models.Index(fields=['uploaded_by', 'uploaded_at']),
+            models.Index(fields=['picture_type', 'uploaded_at']),
+        ]
+        ordering = ['picture_type', 'uploaded_at']
+        
+        # Ensure proper constraints for picture limits
+        constraints = [
+            models.UniqueConstraint(
+                fields=['booking', 'picture_type', 'image'],
+                name='unique_booking_picture'
+            )
+        ]
+    
+    def __str__(self):
+        return f"{self.get_picture_type_display()} picture for {self.booking.booking_id}"
+    
+    def save(self, *args, **kwargs):
+        # Populate image metadata if not set
+        if self.image and not self.file_size:
+            try:
+                self.file_size = self.image.size
+                # If PIL is available, get image dimensions
+                from PIL import Image
+                img = Image.open(self.image)
+                self.width, self.height = img.size
+            except (ImportError, Exception):
+                pass
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def file_size_mb(self):
+        """Get file size in MB"""
+        if self.file_size:
+            return round(self.file_size / (1024 * 1024), 2)
+        return None

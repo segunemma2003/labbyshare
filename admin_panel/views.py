@@ -563,7 +563,7 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
     def get_queryset(self):
         return Booking.objects.select_related(
             'customer', 'professional__user', 'service', 'region'
-        )
+        ).prefetch_related('pictures')
 
 
 @api_view(['POST'])
@@ -628,6 +628,140 @@ def update_booking_status(request):
         return Response(
             {'error': 'Booking not found'},
             status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Upload before/after pictures for booking (admin only)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'booking_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description='Booking UUID to add pictures to'
+            ),
+            'picture_type': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                enum=['before', 'after'],
+                description='Type of pictures being uploaded'
+            ),
+            'images': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(type=openapi.TYPE_FILE),
+                description='Image files to upload (1-6 images)',
+                minItems=1,
+                maxItems=6
+            ),
+            'captions': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(type=openapi.TYPE_STRING),
+                description='Optional captions for images (must match number of images)',
+                required=False
+            ),
+        },
+        required=['booking_id', 'picture_type', 'images']
+    ),
+    responses={201: 'Pictures uploaded successfully'}
+)
+def upload_booking_pictures(request):
+    """
+    Upload before/after pictures for booking (admin only)
+    """
+    try:
+        from .serializers import AdminBookingPictureUploadSerializer
+        from bookings.serializers import BookingPictureUploadSerializer
+        
+        # Extract data from request
+        booking_id = request.data.get('booking_id')
+        picture_type = request.data.get('picture_type')
+        images = request.FILES.getlist('images')
+        captions = request.data.getlist('captions') if 'captions' in request.data else []
+        
+        # Validate input
+        if not booking_id:
+            return Response(
+                {'error': 'booking_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not picture_type:
+            return Response(
+                {'error': 'picture_type is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not images:
+            return Response(
+                {'error': 'At least one image is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate booking exists
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Prepare data for serializer
+        upload_data = {
+            'picture_type': picture_type,
+            'images': images,
+            'captions': captions if captions else []
+        }
+        
+        # Validate the upload
+        upload_serializer = BookingPictureUploadSerializer(data=upload_data)
+        if not upload_serializer.is_valid():
+            return Response(
+                {'errors': upload_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check picture limits
+        try:
+            upload_serializer.validate_booking_picture_limits(booking, picture_type)
+        except serializers.ValidationError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the pictures
+        created_pictures = upload_serializer.create_pictures(booking, request.user)
+        
+        # Log admin activity
+        AdminActivity.objects.create(
+            admin_user=request.user,
+            activity_type='booking_management',
+            description=f"Uploaded {len(created_pictures)} {picture_type} picture(s) for booking {booking_id}",
+            target_model='Booking',
+            target_id=str(booking.id),
+            new_data={
+                'picture_type': picture_type,
+                'pictures_count': len(created_pictures)
+            }
+        )
+        
+        # Return success response with created pictures
+        from bookings.serializers import BookingPictureSerializer
+        picture_data = BookingPictureSerializer(created_pictures, many=True, context={'request': request}).data
+        
+        return Response({
+            'message': f'Successfully uploaded {len(created_pictures)} {picture_type} picture(s)',
+            'uploaded_pictures': picture_data,
+            'booking_id': str(booking_id)
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        logger.error(f"Error uploading booking pictures: {str(e)}")
+        return Response(
+            {'error': 'Failed to upload pictures'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 

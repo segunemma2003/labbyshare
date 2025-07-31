@@ -7,13 +7,14 @@ from django.contrib.auth.password_validation import validate_password
 from .models import AdminActivity, SystemAlert, SupportTicket, TicketMessage
 from accounts.models import User
 from professionals.models import Professional, ProfessionalAvailability, ProfessionalService
-from bookings.models import Booking, Review
+from bookings.models import Booking, Review, BookingPicture
 from payments.models import Payment, SavedPaymentMethod
 from services.models import Category, Service, AddOn, RegionalPricing
 from regions.models import Region, RegionalSettings
 from notifications.models import Notification
 from bookings.serializers import (
-    BookingAddOnSerializer, ReviewSerializer, BookingRescheduleSerializer, BookingMessageSerializer
+    BookingAddOnSerializer, ReviewSerializer, BookingRescheduleSerializer, BookingMessageSerializer,
+    BookingPictureSerializer, BookingPictureUploadSerializer
 )
 
 # ===================== USER MANAGEMENT SERIALIZERS =====================
@@ -333,6 +334,11 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     messages = BookingMessageSerializer(many=True, read_only=True)
     status_history = serializers.SerializerMethodField()
     
+    # Before and after pictures
+    before_pictures = serializers.SerializerMethodField()
+    after_pictures = serializers.SerializerMethodField()
+    picture_counts = serializers.SerializerMethodField()
+    
     class Meta:
         model = Booking
         fields = [
@@ -346,7 +352,8 @@ class AdminBookingSerializer(serializers.ModelSerializer):
             'deposit_required', 'deposit_percentage', 'deposit_amount',
             'cancelled_by', 'cancelled_at', 'cancellation_reason',
             'created_at', 'updated_at', 'confirmed_at', 'completed_at',
-            'selected_addons', 'review', 'reschedule_requests', 'messages', 'status_history'
+            'selected_addons', 'review', 'reschedule_requests', 'messages', 'status_history',
+            'before_pictures', 'after_pictures', 'picture_counts'
         ]
     def get_professional(self, obj):
         if obj.professional and obj.professional.user:
@@ -377,6 +384,26 @@ class AdminBookingSerializer(serializers.ModelSerializer):
             }
             for h in obj.status_history.all().order_by('-created_at')
         ]
+    
+    def get_before_pictures(self, obj):
+        """Get before pictures for the booking"""
+        before_pics = obj.pictures.filter(picture_type='before').order_by('uploaded_at')
+        return BookingPictureSerializer(before_pics, many=True, context=self.context).data
+    
+    def get_after_pictures(self, obj):
+        """Get after pictures for the booking"""
+        after_pics = obj.pictures.filter(picture_type='after').order_by('uploaded_at')
+        return BookingPictureSerializer(after_pics, many=True, context=self.context).data
+    
+    def get_picture_counts(self, obj):
+        """Get picture counts for admin reference"""
+        before_count = obj.pictures.filter(picture_type='before').count()
+        after_count = obj.pictures.filter(picture_type='after').count()
+        return {
+            'before': before_count,
+            'after': after_count,
+            'total': before_count + after_count
+        }
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
@@ -388,6 +415,65 @@ class AdminBookingUpdateSerializer(serializers.ModelSerializer):
             'status', 'payment_status', 'scheduled_date', 'scheduled_time',
             'professional_notes', 'admin_notes'  # Fixed: use correct field names
         ]
+
+
+class AdminBookingPictureUploadSerializer(serializers.Serializer):
+    """
+    Admin serializer for uploading booking pictures during appointment update
+    """
+    booking_id = serializers.UUIDField(help_text="Booking UUID to add pictures to")
+    picture_uploads = BookingPictureUploadSerializer(many=True, help_text="Picture upload data")
+    
+    def validate_booking_id(self, value):
+        """Validate that booking exists"""
+        try:
+            booking = Booking.objects.get(booking_id=value)
+            return value
+        except Booking.DoesNotExist:
+            raise serializers.ValidationError("Booking not found.")
+    
+    def validate(self, data):
+        """Cross-field validation"""
+        booking_id = data.get('booking_id')
+        picture_uploads = data.get('picture_uploads', [])
+        
+        if not picture_uploads:
+            raise serializers.ValidationError("At least one picture upload is required.")
+        
+        # Get the booking
+        booking = Booking.objects.get(booking_id=booking_id)
+        
+        # Validate picture limits for each upload type
+        for upload_data in picture_uploads:
+            serializer = BookingPictureUploadSerializer(data=upload_data)
+            if serializer.is_valid():
+                # Check picture limits
+                try:
+                    serializer.validate_booking_picture_limits(booking, upload_data['picture_type'])
+                except serializers.ValidationError as e:
+                    raise serializers.ValidationError({
+                        'picture_uploads': f"Picture limit validation failed for {upload_data['picture_type']}: {str(e)}"
+                    })
+            else:
+                raise serializers.ValidationError({'picture_uploads': serializer.errors})
+        
+        return data
+    
+    def create_booking_pictures(self, validated_data, uploaded_by):
+        """Create booking pictures from validated data"""
+        booking_id = validated_data['booking_id']
+        picture_uploads = validated_data['picture_uploads']
+        
+        booking = Booking.objects.get(booking_id=booking_id)
+        created_pictures = []
+        
+        for upload_data in picture_uploads:
+            upload_serializer = BookingPictureUploadSerializer(data=upload_data)
+            if upload_serializer.is_valid():
+                pictures = upload_serializer.create_pictures(booking, uploaded_by)
+                created_pictures.extend(pictures)
+        
+        return created_pictures
 
 # ===================== PAYMENT MANAGEMENT SERIALIZERS =====================
 
