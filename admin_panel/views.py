@@ -796,6 +796,404 @@ def upload_booking_pictures(request):
         )
 
 
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Get all pictures for a specific booking (admin only)",
+    manual_parameters=[
+        openapi.Parameter(
+            'booking_id',
+            openapi.IN_PATH,
+            description="Booking UUID",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+        openapi.Parameter(
+            'picture_type',
+            openapi.IN_QUERY,
+            description="Filter by picture type",
+            type=openapi.TYPE_STRING,
+            enum=['before', 'after'],
+            required=False
+        ),
+    ],
+    responses={200: 'List of booking pictures'}
+)
+def get_booking_pictures(request, booking_id):
+    """
+    Get all pictures for a specific booking with optional filtering by type
+    """
+    try:
+        from bookings.models import BookingPicture
+        from bookings.serializers import BookingPictureSerializer
+        
+        # Validate booking exists
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get pictures with optional filtering
+        pictures = BookingPicture.objects.filter(booking=booking)
+        
+        picture_type = request.query_params.get('picture_type')
+        if picture_type and picture_type in ['before', 'after']:
+            pictures = pictures.filter(picture_type=picture_type)
+        
+        pictures = pictures.order_by('picture_type', 'uploaded_at')
+        
+        # Serialize and return
+        serializer = BookingPictureSerializer(pictures, many=True, context={'request': request})
+        
+        # Add summary info
+        before_count = BookingPicture.objects.filter(booking=booking, picture_type='before').count()
+        after_count = BookingPicture.objects.filter(booking=booking, picture_type='after').count()
+        
+        return Response({
+            'booking_id': str(booking_id),
+            'pictures': serializer.data,
+            'summary': {
+                'before_count': before_count,
+                'after_count': after_count,
+                'total_count': before_count + after_count,
+                'can_add_before': 6 - before_count,
+                'can_add_after': 6 - after_count
+            }
+        })
+        
+    except Exception as e:
+        # Check if this is a table doesn't exist error
+        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
+            return Response(
+                {
+                    'error': 'Picture feature not available yet. Please run database migrations first.',
+                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        logger.error(f"Error getting booking pictures: {str(e)}")
+        return Response(
+            {'error': 'Failed to retrieve pictures'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Update a specific booking picture (admin only)",
+    manual_parameters=[
+        openapi.Parameter(
+            'picture_id',
+            openapi.IN_PATH,
+            description="Picture ID",
+            type=openapi.TYPE_INTEGER,
+            required=True
+        ),
+    ],
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'caption': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="New caption for the picture"
+            ),
+        }
+    ),
+    responses={200: 'Picture updated successfully'}
+)
+def update_booking_picture(request, picture_id):
+    """
+    Update a specific booking picture (currently only caption can be updated)
+    """
+    try:
+        from bookings.models import BookingPicture
+        from bookings.serializers import BookingPictureSerializer
+        
+        # Get the picture
+        try:
+            picture = BookingPicture.objects.get(id=picture_id)
+        except BookingPicture.DoesNotExist:
+            return Response(
+                {'error': 'Picture not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update caption if provided
+        caption = request.data.get('caption', '')
+        if 'caption' in request.data:
+            picture.caption = caption
+            picture.save()
+            
+            # Log admin activity
+            AdminActivity.objects.create(
+                admin_user=request.user,
+                activity_type='booking_management',
+                description=f"Updated caption for {picture.picture_type} picture (ID: {picture_id}) for booking {picture.booking.booking_id}",
+                target_model='BookingPicture',
+                target_id=str(picture.id),
+                previous_data={'caption': picture.caption},
+                new_data={'caption': caption}
+            )
+        
+        # Return updated picture
+        serializer = BookingPictureSerializer(picture, context={'request': request})
+        return Response({
+            'message': 'Picture updated successfully',
+            'picture': serializer.data
+        })
+        
+    except Exception as e:
+        # Check if this is a table doesn't exist error
+        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
+            return Response(
+                {
+                    'error': 'Picture feature not available yet. Please run database migrations first.',
+                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        logger.error(f"Error updating booking picture: {str(e)}")
+        return Response(
+            {'error': 'Failed to update picture'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Delete a specific booking picture (admin only)",
+    manual_parameters=[
+        openapi.Parameter(
+            'picture_id',
+            openapi.IN_PATH,
+            description="Picture ID to delete",
+            type=openapi.TYPE_INTEGER,
+            required=True
+        ),
+    ],
+    responses={204: 'Picture deleted successfully'}
+)
+def delete_booking_picture(request, picture_id):
+    """
+    Delete a specific booking picture
+    """
+    try:
+        from bookings.models import BookingPicture
+        
+        # Get the picture
+        try:
+            picture = BookingPicture.objects.get(id=picture_id)
+        except BookingPicture.DoesNotExist:
+            return Response(
+                {'error': 'Picture not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Store info for logging before deletion
+        booking_id = picture.booking.booking_id
+        picture_type = picture.picture_type
+        image_path = picture.image.name if picture.image else None
+        
+        # Delete the image file from storage
+        if picture.image:
+            try:
+                picture.image.delete(save=False)
+            except Exception as e:
+                logger.warning(f"Failed to delete image file {image_path}: {str(e)}")
+        
+        # Delete the database record
+        picture.delete()
+        
+        # Log admin activity
+        AdminActivity.objects.create(
+            admin_user=request.user,
+            activity_type='booking_management',
+            description=f"Deleted {picture_type} picture (ID: {picture_id}) for booking {booking_id}",
+            target_model='BookingPicture',
+            target_id=str(picture_id),
+            previous_data={
+                'picture_type': picture_type,
+                'image_path': image_path,
+                'booking_id': str(booking_id)
+            }
+        )
+        
+        return Response({
+            'message': f'{picture_type.title()} picture deleted successfully',
+            'deleted_picture_id': picture_id,
+            'booking_id': str(booking_id)
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        # Check if this is a table doesn't exist error
+        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
+            return Response(
+                {
+                    'error': 'Picture feature not available yet. Please run database migrations first.',
+                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        logger.error(f"Error deleting booking picture: {str(e)}")
+        return Response(
+            {'error': 'Failed to delete picture'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Upload a single picture to a booking (admin only)",
+    manual_parameters=[
+        openapi.Parameter(
+            'booking_id',
+            openapi.IN_PATH,
+            description="Booking UUID to add picture to",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+        openapi.Parameter(
+            'picture_type',
+            openapi.IN_FORM,
+            description="Type of picture being uploaded",
+            type=openapi.TYPE_STRING,
+            enum=['before', 'after'],
+            required=True
+        ),
+        openapi.Parameter(
+            'image',
+            openapi.IN_FORM,
+            description="Single image file to upload",
+            type=openapi.TYPE_FILE,
+            required=True
+        ),
+        openapi.Parameter(
+            'caption',
+            openapi.IN_FORM,
+            description="Optional caption for the image",
+            type=openapi.TYPE_STRING,
+            required=False
+        ),
+    ],
+    responses={201: 'Picture uploaded successfully'}
+)
+def upload_single_booking_picture(request, booking_id):
+    """
+    Upload a single picture to a booking (alternative to bulk upload)
+    """
+    try:
+        from bookings.models import BookingPicture
+        from bookings.serializers import BookingPictureSerializer
+        
+        # Extract data from request
+        picture_type = request.data.get('picture_type')
+        image = request.FILES.get('image')
+        caption = request.data.get('caption', '')
+        
+        # Validate required fields
+        if not picture_type or picture_type not in ['before', 'after']:
+            return Response(
+                {'error': 'picture_type is required and must be "before" or "after"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not image:
+            return Response(
+                {'error': 'image file is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate booking exists
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if we can add this picture without exceeding limit
+        if not BookingPicture.can_add_pictures(booking, picture_type, 1):
+            current_count = BookingPicture.get_picture_count(booking, picture_type)
+            return Response(
+                {
+                    'error': f'Cannot add more {picture_type} pictures. This booking already has {current_count} {picture_type} pictures. Maximum allowed is 6 per type.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate image file
+        if image.size > 10 * 1024 * 1024:  # 10MB
+            return Response(
+                {'error': 'Image file size cannot exceed 10MB'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        allowed_formats = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+        if hasattr(image, 'content_type') and image.content_type not in allowed_formats:
+            return Response(
+                {'error': 'Only JPEG, PNG, and WebP image formats are allowed'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the picture
+        picture = BookingPicture.objects.create(
+            booking=booking,
+            picture_type=picture_type,
+            image=image,
+            caption=caption,
+            uploaded_by=request.user
+        )
+        
+        # Log admin activity
+        AdminActivity.objects.create(
+            admin_user=request.user,
+            activity_type='booking_management',
+            description=f"Uploaded single {picture_type} picture for booking {booking_id}",
+            target_model='BookingPicture',
+            target_id=str(picture.id),
+            new_data={
+                'picture_type': picture_type,
+                'caption': caption,
+                'booking_id': str(booking_id)
+            }
+        )
+        
+        # Return success response
+        serializer = BookingPictureSerializer(picture, context={'request': request})
+        return Response({
+            'message': f'Successfully uploaded {picture_type} picture',
+            'picture': serializer.data,
+            'booking_id': str(booking_id)
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        # Check if this is a table doesn't exist error
+        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
+            return Response(
+                {
+                    'error': 'Picture upload feature not available yet. Please run database migrations first.',
+                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        
+        logger.error(f"Error uploading single booking picture: {str(e)}")
+        return Response(
+            {'error': 'Failed to upload picture'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 # ===================== PAYMENT MANAGEMENT =====================
 
 class AdminPaymentListView(generics.ListAPIView):

@@ -42,6 +42,12 @@ urlpatterns = [
     path('bookings/upload-pictures/', views.upload_booking_pictures, name='upload_booking_pictures'),
     path('bookings/handle-reschedule/', views.handle_reschedule_request, name='handle_reschedule_request'),
     
+    # ===================== BOOKING PICTURES CRUD =====================
+    path('bookings/<uuid:booking_id>/pictures/', views.get_booking_pictures, name='get_booking_pictures'),
+    path('bookings/<uuid:booking_id>/pictures/upload/', views.upload_single_booking_picture, name='upload_single_booking_picture'),
+    path('pictures/<int:picture_id>/', views.update_booking_picture, name='update_booking_picture'),
+    path('pictures/<int:picture_id>/delete/', views.delete_booking_picture, name='delete_booking_picture'),
+    
     # ===================== PAYMENT MANAGEMENT =====================
     path('payments/', views.AdminPaymentListView.as_view(), name='admin_payments'),
     path('payments/<uuid:payment_id>/', views.AdminPaymentDetailView.as_view(), name='admin_payment_detail'),
