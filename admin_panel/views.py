@@ -1,4 +1,4 @@
-from rest_framework import generics, status, permissions
+from rest_framework import generics, status, permissions, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -10,6 +10,9 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework.pagination import PageNumberPagination
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import AdminActivity, SystemAlert, SupportTicket
 from .serializers import *
@@ -726,14 +729,40 @@ def upload_booking_pictures(request):
         
         # Validate the upload
         serializer = BookingPictureUploadSerializer(data=upload_data)
-        if not serializer.is_valid():
-            return Response(
-                {'errors': serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        try:
+            if not serializer.is_valid():
+                return Response(
+                    {'errors': serializer.errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            # Check if this is a table doesn't exist error
+            if 'bookings_bookingpicture' in str(e) and ('does not exist' in str(e) or 'no such table' in str(e)):
+                return Response(
+                    {
+                        'error': 'Picture upload feature not available yet. Please run database migrations first.',
+                        'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+            # Re-raise other exceptions
+            raise e
         
         # Create the pictures
-        created_pictures = serializer.create_pictures(serializer.validated_data, request.user)
+        try:
+            created_pictures = serializer.create_pictures(serializer.validated_data, request.user)
+        except Exception as e:
+            # Check if this is a table doesn't exist error
+            if 'bookings_bookingpicture' in str(e) and ('does not exist' in str(e) or 'no such table' in str(e)):
+                return Response(
+                    {
+                        'error': 'Picture upload feature not available yet. Please run database migrations first.',
+                        'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+            # Re-raise other exceptions
+            raise e
         
         # Log admin activity
         AdminActivity.objects.create(

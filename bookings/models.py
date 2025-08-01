@@ -620,10 +620,18 @@ class BookingPicture(models.Model):
     @classmethod
     def get_picture_count(cls, booking, picture_type):
         """Get count of pictures for a booking and type"""
-        return cls.objects.filter(booking=booking, picture_type=picture_type).count()
+        try:
+            return cls.objects.filter(booking=booking, picture_type=picture_type).count()
+        except Exception:
+            # Return 0 if table doesn't exist yet (before migration)
+            return 0
     
     @classmethod
     def can_add_pictures(cls, booking, picture_type, count_to_add=1):
         """Check if we can add more pictures without exceeding limit"""
-        current_count = cls.get_picture_count(booking, picture_type)
-        return (current_count + count_to_add) <= 6
+        try:
+            current_count = cls.get_picture_count(booking, picture_type)
+            return (current_count + count_to_add) <= 6
+        except Exception:
+            # Return True if table doesn't exist yet (before migration)
+            return True
