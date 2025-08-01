@@ -561,9 +561,15 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
         return AdminBookingSerializer
     
     def get_queryset(self):
-        return Booking.objects.select_related(
-            'customer', 'professional__user', 'service', 'region'
-        ).prefetch_related('pictures')
+        try:
+            return Booking.objects.select_related(
+                'customer', 'professional__user', 'service', 'region'
+            ).prefetch_related('pictures')
+        except Exception:
+            # Return queryset without pictures prefetch if table doesn't exist yet
+            return Booking.objects.select_related(
+                'customer', 'professional__user', 'service', 'region'
+            )
 
 
 @api_view(['POST'])

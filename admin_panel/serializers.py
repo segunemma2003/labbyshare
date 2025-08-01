@@ -387,25 +387,43 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     
     def get_before_pictures(self, obj):
         """Get before pictures for the booking"""
-        before_pics = obj.pictures.filter(picture_type='before').order_by('uploaded_at')
-        return BookingPictureSerializer(before_pics, many=True, context=self.context).data
+        try:
+            before_pics = obj.pictures.filter(picture_type='before').order_by('uploaded_at')
+            return BookingPictureSerializer(before_pics, many=True, context=self.context).data
+        except Exception:
+            # Return empty list if pictures table doesn't exist yet (before migration)
+            return []
     
     def get_after_pictures(self, obj):
         """Get after pictures for the booking"""
-        after_pics = obj.pictures.filter(picture_type='after').order_by('uploaded_at')
-        return BookingPictureSerializer(after_pics, many=True, context=self.context).data
+        try:
+            after_pics = obj.pictures.filter(picture_type='after').order_by('uploaded_at')
+            return BookingPictureSerializer(after_pics, many=True, context=self.context).data
+        except Exception:
+            # Return empty list if pictures table doesn't exist yet (before migration)
+            return []
     
     def get_picture_counts(self, obj):
         """Get picture counts for admin reference"""
-        before_count = obj.pictures.filter(picture_type='before').count()
-        after_count = obj.pictures.filter(picture_type='after').count()
-        return {
-            'before': before_count,
-            'after': after_count,
-            'total': before_count + after_count,
-            'can_add_before': 6 - before_count,
-            'can_add_after': 6 - after_count
-        }
+        try:
+            before_count = obj.pictures.filter(picture_type='before').count()
+            after_count = obj.pictures.filter(picture_type='after').count()
+            return {
+                'before': before_count,
+                'after': after_count,
+                'total': before_count + after_count,
+                'can_add_before': 6 - before_count,
+                'can_add_after': 6 - after_count
+            }
+        except Exception:
+            # Return default counts if pictures table doesn't exist yet (before migration)
+            return {
+                'before': 0,
+                'after': 0,
+                'total': 0,
+                'can_add_before': 6,
+                'can_add_after': 6
+            }
 
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
