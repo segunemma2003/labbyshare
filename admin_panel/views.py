@@ -392,9 +392,9 @@ class AdminCategoryListView(generics.ListCreateAPIView):
     serializer_class = AdminCategorySerializer
     permission_classes = [IsAdminUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['region', 'is_active']
+    filterset_fields = ['region', 'is_active', 'is_featured']
     search_fields = ['name', 'description']
-    ordering_fields = ['sort_order', 'name', 'created_at']
+    ordering_fields = ['sort_order', 'name', 'created_at', 'is_featured']
     ordering = ['sort_order', 'name']
     
     def get_queryset(self):
@@ -1574,6 +1574,10 @@ def bulk_operations(request):
             queryset.update(is_verified=True, verified_at=timezone.now())
         elif operation == 'unverify' and model_name == 'professional':
             queryset.update(is_verified=False)
+        elif operation == 'feature' and model_name == 'category':
+            queryset.update(is_featured=True)
+        elif operation == 'unfeature' and model_name == 'category':
+            queryset.update(is_featured=False)
         elif operation == 'delete':
             queryset.delete()
         else:

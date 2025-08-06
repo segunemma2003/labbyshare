@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from django.core.cache import cache
@@ -44,6 +44,11 @@ class CategoryListView(generics.ListAPIView):
     """
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_featured']
+    search_fields = ['name', 'description']
+    ordering_fields = ['sort_order', 'name', 'is_featured']
+    ordering = ['sort_order', 'name']
     
     @swagger_auto_schema(
         operation_description="Get categories for current region",
@@ -52,7 +57,13 @@ class CategoryListView(generics.ListAPIView):
                 'X-Region', openapi.IN_HEADER,
                 description="Region code (UK, UAE)",
                 type=openapi.TYPE_STRING
-            )
+            ),
+            openapi.Parameter(
+                'is_featured', openapi.IN_QUERY,
+                description="Filter featured categories only",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
         ],
         responses={200: CategorySerializer(many=True)}
     )
@@ -261,6 +272,42 @@ class VideoUploadView(generics.ListCreateAPIView):
         # Handle file saving logic here
         # For now, just pass (or implement actual save logic)
         pass
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+@swagger_auto_schema(
+    operation_description="Get featured categories for current region",
+    responses={200: CategorySerializer(many=True)}
+)
+def featured_categories(request):
+    """
+    Get featured categories for current region
+    """
+    region = getattr(request, 'region', None)
+    if not region:
+        return Response({'error': 'Region not found'}, status=400)
+    
+    # Check cache first
+    cache_key = f"featured_categories_{region.id}"
+    cached_categories = cache.get(cache_key)
+    
+    if cached_categories is not None:
+        return Response(cached_categories)
+    
+    categories = Category.objects.filter(
+        region=region,
+        is_active=True,
+        is_featured=True
+    ).prefetch_related('services').order_by('sort_order', 'name')
+    
+    serializer = CategorySerializer(categories, many=True, context={'request': request})
+    data = serializer.data
+    
+    # Cache for 1 hour
+    cache.set(cache_key, data, 3600)
+    
+    return Response(data)
 
 
 @api_view(['GET'])

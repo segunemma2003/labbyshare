@@ -14,7 +14,7 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = [
             'id', 'name', 'description', 'icon', 'sort_order', 
-            'services_count', 'slug', 'addons'
+            'services_count', 'slug', 'addons', 'is_featured'
         ]
     
     def get_services_count(self, obj):

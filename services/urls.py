@@ -6,6 +6,7 @@ app_name = 'services'
 urlpatterns = [
     # Categories
     path('categories/', views.CategoryListView.as_view(), name='category_list'),
+    path('categories/featured/', views.featured_categories, name='featured_categories'),
     path('categories/<int:category_id>/services/', views.CategoryServicesView.as_view(), name='category_services'),
     path('categories/<int:category_id>/addons/', views.CategoryAddOnsView.as_view(), name='category_addons'),
     # Add-ons (standalone)

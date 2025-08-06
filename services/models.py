@@ -18,7 +18,7 @@ class CategoryManager(models.Manager):
             categories = list(
                 self.filter(region=region, is_active=True)
                 .order_by('sort_order', 'name')
-                .values('id', 'name', 'description', 'icon', 'sort_order')
+                .values('id', 'name', 'description', 'icon', 'sort_order', 'is_featured')
             )
             cache.set(cache_key, categories, settings.CACHE_TIMEOUTS['CATEGORIES'])
         
@@ -43,6 +43,7 @@ class Category(models.Model):
     
     # Display and status
     is_active = models.BooleanField(default=True, db_index=True)
+    is_featured = models.BooleanField(default=False, db_index=True)
     sort_order = models.IntegerField(default=0, db_index=True)
     
     # SEO and metadata
@@ -74,6 +75,9 @@ class Category(models.Model):
         # Clear cache when category is updated
         cache_key = settings.CACHE_KEYS['CATEGORIES'].format(self.region.id)
         cache.delete(cache_key)
+        # Clear featured categories cache
+        featured_cache_key = f"featured_categories_{self.region.id}"
+        cache.delete(featured_cache_key)
 
 
 class ServiceManager(models.Manager):

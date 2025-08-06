@@ -231,7 +231,7 @@ class AdminCategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = [
             'id', 'name', 'description', 'icon', 'region', 'is_active',
-            'sort_order', 'slug', 'meta_description', 'services_count',
+            'is_featured', 'sort_order', 'slug', 'meta_description', 'services_count',
             'addons', 'addons_details', 'created_at', 'updated_at'
         ]
     def get_services_count(self, obj):
@@ -566,6 +566,8 @@ class BulkOperationSerializer(serializers.Serializer):
         ('delete', 'Delete'),
         ('verify', 'Verify'),
         ('unverify', 'Unverify'),
+        ('feature', 'Feature'),
+        ('unfeature', 'Unfeature'),
     ]
     
     ids = serializers.ListField(child=serializers.IntegerField())
