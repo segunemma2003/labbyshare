@@ -2069,3 +2069,37 @@ def fix_booking_payment_status(request):
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Test professional update serializer",
+    request_body=AdminProfessionalUpdateSerializer,
+    responses={200: 'Test successful'}
+)
+def test_professional_update(request):
+    """
+    Test endpoint to debug professional update issues
+    """
+    try:
+        # Test the serializer
+        serializer = AdminProfessionalUpdateSerializer(data=request.data)
+        if serializer.is_valid():
+            return Response({
+                'message': 'Serializer is valid',
+                'validated_data': serializer.validated_data
+            })
+        else:
+            return Response({
+                'message': 'Serializer validation failed',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in test_professional_update: {str(e)}")
+        return Response({
+            'error': str(e),
+            'type': type(e).__name__
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

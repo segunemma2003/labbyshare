@@ -18,6 +18,7 @@ urlpatterns = [
     path('professionals/', views.AdminProfessionalListView.as_view(), name='admin_professionals'),
     path('professionals/<int:pk>/', views.AdminProfessionalDetailView.as_view(), name='admin_professional_detail'),
     path('professionals/verify/', views.verify_professional, name='verify_professional'),
+    path('professionals/test-update/', views.test_professional_update, name='test_professional_update'),
     
     # ===================== CATEGORY MANAGEMENT =====================
     path('categories/', views.AdminCategoryListView.as_view(), name='admin_categories'),

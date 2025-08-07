@@ -255,6 +255,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
             'regions', 'services', 'availability'
         ]
+    
     def update(self, instance, validated_data):
         # Handle user fields
         user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
