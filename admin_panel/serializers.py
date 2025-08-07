@@ -257,13 +257,20 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         ]
     
     def update(self, instance, validated_data):
-        # Handle user fields
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
+        # Handle user fields - these come from source='user.field_name'
         user_data = {}
+        user_fields_mapping = {
+            'first_name': 'first_name',
+            'last_name': 'last_name', 
+            'email': 'email',
+            'phone_number': 'phone_number',
+            'user_is_active': 'is_active'
+        }
         
-        for field in user_fields:
-            if field in validated_data:
-                user_data[field] = validated_data.pop(field)
+        # Extract user fields from validated_data
+        for serializer_field, user_field in user_fields_mapping.items():
+            if serializer_field in validated_data:
+                user_data[user_field] = validated_data.pop(serializer_field)
         
         # Update user if user data provided
         if user_data:
