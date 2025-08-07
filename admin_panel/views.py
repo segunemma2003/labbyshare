@@ -384,13 +384,27 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def update(self, request, *args, **kwargs):
         try:
-            return super().update(request, *args, **kwargs)
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Updating professional {kwargs.get('pk')} with data: {request.data}")
+            
+            response = super().update(request, *args, **kwargs)
+            logger.debug(f"Professional update successful: {response.data}")
+            return response
+            
         except Exception as e:
             import logging
+            import traceback
             logger = logging.getLogger(__name__)
             logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
+            logger.error(f"Request data: {request.data}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            
             return Response(
-                {'error': 'Failed to update professional. Please check the logs for details.'},
+                {
+                    'error': 'Failed to update professional. Please check the logs for details.',
+                    'details': str(e),
+                    'type': type(e).__name__
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -2082,24 +2096,56 @@ def test_professional_update(request):
     """
     Test endpoint to debug professional update issues
     """
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Test professional update called with data: {request.data}")
+    
     try:
         # Test the serializer
         serializer = AdminProfessionalUpdateSerializer(data=request.data)
+        logger.debug(f"Serializer created, checking validity...")
+        
         if serializer.is_valid():
+            logger.debug(f"Serializer is valid, validated data: {serializer.validated_data}")
             return Response({
                 'message': 'Serializer is valid',
                 'validated_data': serializer.validated_data
             })
         else:
+            logger.error(f"Serializer validation failed: {serializer.errors}")
             return Response({
                 'message': 'Serializer validation failed',
                 'errors': serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
+        import traceback
         logger.error(f"Error in test_professional_update: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return Response({
             'error': str(e),
-            'type': type(e).__name__
+            'type': type(e).__name__,
+            'traceback': traceback.format_exc().split('\n')
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def debug_info(request):
+    """
+    Debug endpoint to show system information
+    """
+    import sys
+    import django
+    from django.conf import settings
+    
+    logger = logging.getLogger(__name__)
+    logger.debug("Debug info endpoint called")
+    
+    return Response({
+        'debug_enabled': settings.DEBUG,
+        'python_version': sys.version,
+        'django_version': django.get_version(),
+        'installed_apps': list(settings.INSTALLED_APPS),
+        'middleware': list(settings.MIDDLEWARE),
+        'database_engine': settings.DATABASES['default']['ENGINE'],
+        'allowed_hosts': settings.ALLOWED_HOSTS,
+    })

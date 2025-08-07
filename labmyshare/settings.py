@@ -17,7 +17,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-kbe964))52lspgz7g4jf9
 
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
+DEBUG = True  # Force debug mode for troubleshooting
 
 # Environment detection
 IS_PRODUCTION = not DEBUG or os.environ.get('ENVIRONMENT') == 'production'
@@ -95,6 +95,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'regions.middleware.RegionMiddleware',
+    'utils.debug_middleware.DebugMiddleware',  # Add debug middleware
 ]
 
 ROOT_URLCONF = 'labmyshare.urls'
@@ -381,27 +382,57 @@ LOGGING = {
     'loggers': {
         'django': {
             'handlers': ['console'],
-            'level': 'DEBUG' if IS_LOCAL else 'INFO',
+            'level': 'DEBUG',
             'propagate': False,
         },
         'django.db.backends': {
             'handlers': ['console'],
-            'level': 'DEBUG' if IS_LOCAL else 'INFO',
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
             'propagate': False,
         },
         'accounts': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'DEBUG',
             'propagate': False,
         },
         'payments': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'DEBUG',
             'propagate': False,
         },
         'notifications': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'admin_panel': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'professionals': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'services': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'bookings': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
             'propagate': False,
         },
     },
@@ -436,6 +467,21 @@ if IS_PRODUCTION and not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+# Debug Settings
+if DEBUG:
+    # Show detailed error pages
+    TEMPLATES[0]['OPTIONS']['debug'] = True
+    
+    # Enable SQL logging
+    LOGGING['loggers']['django.db.backends']['level'] = 'DEBUG'
+    
+    # Show all SQL queries
+    LOGGING['loggers']['django.db.backends.schema'] = {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+        'propagate': False,
+    }
 
 # Cache Keys and Timeouts
 CACHE_KEYS = {
