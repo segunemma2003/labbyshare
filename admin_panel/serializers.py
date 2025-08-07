@@ -256,26 +256,34 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'regions', 'services', 'availability'
         ]
     
+    def to_internal_value(self, data):
+        # Remove user fields from data before processing to avoid assignment error
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
+        internal_data = data.copy()
+        
+        # Store user data separately
+        self.user_data = {}
+        for field in user_fields:
+            if field in internal_data:
+                self.user_data[field] = internal_data.pop(field)
+        
+        return super().to_internal_value(internal_data)
+    
     def update(self, instance, validated_data):
-        # Handle user fields - these come from source='user.field_name'
-        user_data = {}
-        user_fields_mapping = {
-            'first_name': 'first_name',
-            'last_name': 'last_name', 
-            'email': 'email',
-            'phone_number': 'phone_number',
-            'user_is_active': 'is_active'
-        }
-        
-        # Extract user fields from validated_data
-        for serializer_field, user_field in user_fields_mapping.items():
-            if serializer_field in validated_data:
-                user_data[user_field] = validated_data.pop(serializer_field)
-        
-        # Update user if user data provided
-        if user_data:
-            for field, value in user_data.items():
-                setattr(instance.user, field, value)
+        # Handle user fields using the data stored in to_internal_value
+        if hasattr(self, 'user_data') and self.user_data:
+            # Map serializer field names to user model field names
+            field_mapping = {
+                'first_name': 'first_name',
+                'last_name': 'last_name',
+                'email': 'email', 
+                'phone_number': 'phone_number',
+                'user_is_active': 'is_active'
+            }
+            
+            for serializer_field, user_field in field_mapping.items():
+                if serializer_field in self.user_data:
+                    setattr(instance.user, user_field, self.user_data[serializer_field])
             instance.user.save()
         
         # Extract other fields
@@ -283,7 +291,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         services = validated_data.pop('services', None)
         availability_data = validated_data.pop('availability', None)
         
-        # Update professional fields
+        # Update professional fields (excluding user fields)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
