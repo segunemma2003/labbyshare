@@ -381,6 +381,18 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ['PUT', 'PATCH']:
             return AdminProfessionalUpdateSerializer
         return AdminProfessionalDetailSerializer
+    
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
+            return Response(
+                {'error': 'Failed to update professional. Please check the logs for details.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ===================== CATEGORY MANAGEMENT =====================

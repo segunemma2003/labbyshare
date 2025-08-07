@@ -253,51 +253,108 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
-            'regions', 'services'
+            'regions', 'services', 'availability'
         ]
     def update(self, instance, validated_data):
+        # Handle user fields
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
         user_data = {}
-        if 'user' in validated_data:
-            user_data = validated_data.pop('user')
+        
+        for field in user_fields:
+            if field in validated_data:
+                user_data[field] = validated_data.pop(field)
+        
+        # Update user if user data provided
         if user_data:
             for field, value in user_data.items():
                 setattr(instance.user, field, value)
             instance.user.save()
+        
+        # Extract other fields
         regions = validated_data.pop('regions', None)
         services = validated_data.pop('services', None)
         availability_data = validated_data.pop('availability', None)
         
+        # Update professional fields
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
         
+        # Handle regions and services updates
         if regions is not None:
             instance.regions.set(regions)
-        if services is not None:
+            
+            # Update ProfessionalService entries if services are also provided
+            if services is not None:
+                # Clear existing ProfessionalService entries
+                instance.professionalservice_set.all().delete()
+                
+                # Create new ProfessionalService entries for each region-service combination
+                for region in regions:
+                    for service in services:
+                        ProfessionalService.objects.create(
+                            professional=instance,
+                            service=service,
+                            region=region
+                        )
+            else:
+                # If only regions changed, update ProfessionalService entries for existing services
+                existing_services = instance.services.all()
+                instance.professionalservice_set.all().delete()
+                for region in regions:
+                    for service in existing_services:
+                        ProfessionalService.objects.create(
+                            professional=instance,
+                            service=service,
+                            region=region
+                        )
+        elif services is not None:
+            # Only services changed, update ProfessionalService entries for existing regions
+            existing_regions = instance.regions.all()
+            instance.professionalservice_set.all().delete()
+            for region in existing_regions:
+                for service in services:
+                    ProfessionalService.objects.create(
+                        professional=instance,
+                        service=service,
+                        region=region
+                    )
             instance.services.set(services)
         
         # Handle availability updates
         if availability_data is not None:
-            # Clear existing availability for this professional
-            instance.availability_schedule.all().delete()
-            
-            # Create new availability entries
-            for availability_item in availability_data:
-                try:
-                    region = Region.objects.get(id=availability_item['region_id'])
-                    ProfessionalAvailability.objects.create(
-                        professional=instance,
-                        region=region,
-                        weekday=availability_item['weekday'],
-                        start_time=availability_item['start_time'],
-                        end_time=availability_item['end_time'],
-                        break_start=availability_item.get('break_start'),
-                        break_end=availability_item.get('break_end'),
-                        is_active=availability_item.get('is_active', True)
-                    )
-                except Region.DoesNotExist:
-                    # Skip if region doesn't exist
-                    continue
+            try:
+                # Clear existing availability for this professional
+                instance.availability_schedule.all().delete()
+                
+                # Create new availability entries
+                for availability_item in availability_data:
+                    try:
+                        region = Region.objects.get(id=availability_item['region_id'])
+                        ProfessionalAvailability.objects.create(
+                            professional=instance,
+                            region=region,
+                            weekday=availability_item['weekday'],
+                            start_time=availability_item['start_time'],
+                            end_time=availability_item['end_time'],
+                            break_start=availability_item.get('break_start'),
+                            break_end=availability_item.get('break_end'),
+                            is_active=availability_item.get('is_active', True)
+                        )
+                    except Region.DoesNotExist:
+                        # Skip if region doesn't exist
+                        continue
+                    except Exception as e:
+                        # Log any other errors but continue
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error creating availability for professional {instance.id}: {str(e)}")
+                        continue
+            except Exception as e:
+                # Log any errors in availability handling
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error updating availability for professional {instance.id}: {str(e)}")
         
         return instance
 
@@ -758,46 +815,84 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
         ]
     
     def get_total_bookings(self, obj):
-        return obj.bookings.count()
+        try:
+            return obj.bookings.count()
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting total bookings for professional {obj.id}: {str(e)}")
+            return 0
     
     def get_total_earnings(self, obj):
-        from bookings.models import Booking
-        completed_bookings = obj.bookings.filter(status='completed')
-        return float(sum(booking.total_amount for booking in completed_bookings))
+        try:
+            from bookings.models import Booking
+            completed_bookings = obj.bookings.filter(status='completed')
+            return float(sum(booking.total_amount for booking in completed_bookings))
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting total earnings for professional {obj.id}: {str(e)}")
+            return 0.0
     
     def get_regions_served(self, obj):
-        return [{'id': r.id, 'name': r.name, 'code': r.code} for r in obj.regions.all()]
+        try:
+            return [{'id': r.id, 'name': r.name, 'code': r.code} for r in obj.regions.all()]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting regions served for professional {obj.id}: {str(e)}")
+            return []
     
     def get_services_offered(self, obj):
-        services = obj.services.all()
-        return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]
+        try:
+            services = obj.services.all()
+            return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting services offered for professional {obj.id}: {str(e)}")
+            return []
     
     def get_availability_by_region(self, obj):
         """Get availability grouped by region"""
-        availability_data = {}
-        
-        for availability in obj.availability_schedule.filter(is_active=True).select_related('region'):
-            region_id = availability.region.id
-            region_name = availability.region.name
+        try:
+            availability_data = {}
             
-            if region_id not in availability_data:
-                availability_data[region_id] = {
-                    'region_id': region_id,
-                    'region_name': region_name,
-                    'schedule': []
-                }
+            for availability in obj.availability_schedule.filter(is_active=True).select_related('region'):
+                try:
+                    region_id = availability.region.id
+                    region_name = availability.region.name
+                    
+                    if region_id not in availability_data:
+                        availability_data[region_id] = {
+                            'region_id': region_id,
+                            'region_name': region_name,
+                            'schedule': []
+                        }
+                    
+                    availability_data[region_id]['schedule'].append({
+                        'weekday': availability.weekday,
+                        'weekday_name': availability.get_weekday_display(),
+                        'start_time': availability.start_time.strftime('%H:%M') if availability.start_time else None,
+                        'end_time': availability.end_time.strftime('%H:%M') if availability.end_time else None,
+                        'break_start': availability.break_start.strftime('%H:%M') if availability.break_start else None,
+                        'break_end': availability.break_end.strftime('%H:%M') if availability.break_end else None,
+                        'is_active': availability.is_active
+                    })
+                except Exception as e:
+                    # Log individual availability errors but continue
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error processing availability {availability.id}: {str(e)}")
+                    continue
             
-            availability_data[region_id]['schedule'].append({
-                'weekday': availability.weekday,
-                'weekday_name': availability.get_weekday_display(),
-                'start_time': availability.start_time.strftime('%H:%M'),
-                'end_time': availability.end_time.strftime('%H:%M'),
-                'break_start': availability.break_start.strftime('%H:%M') if availability.break_start else None,
-                'break_end': availability.break_end.strftime('%H:%M') if availability.break_end else None,
-                'is_active': availability.is_active
-            })
-        
-        return list(availability_data.values())
+            return list(availability_data.values())
+        except Exception as e:
+            # Log any errors in the method
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in get_availability_by_region for professional {obj.id}: {str(e)}")
+            return []
     
     
 
