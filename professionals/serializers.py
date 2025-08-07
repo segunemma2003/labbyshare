@@ -148,12 +148,19 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
         many=True
     )
     
+    # Availability data
+    availability = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        help_text="List of availability objects with region_id, weekday, start_time, end_time, etc."
+    )
+    
     class Meta:
         model = Professional
         fields = [
             'bio', 'experience_years', 'travel_radius_km',
             'min_booking_notice_hours', 'cancellation_policy',
-            'regions', 'services'
+            'regions', 'services', 'availability'
         ]
     
     def __init__(self, *args, **kwargs):
@@ -164,9 +171,51 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
         self.fields['regions'].queryset = Region.objects.filter(is_active=True)
         self.fields['services'].queryset = Service.objects.filter(is_active=True)
     
+    def validate_availability(self, value):
+        """Validate availability data"""
+        if not value:
+            return value
+        
+        for item in value:
+            # Check required fields
+            required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+            for field in required_fields:
+                if field not in item:
+                    raise serializers.ValidationError(f"Missing required field: {field}")
+            
+            # Validate weekday
+            weekday = item.get('weekday')
+            if not isinstance(weekday, int) or weekday < 0 or weekday > 6:
+                raise serializers.ValidationError("Weekday must be an integer between 0 and 6")
+            
+            # Validate times
+            try:
+                start_time = item.get('start_time')
+                end_time = item.get('end_time')
+                
+                if start_time >= end_time:
+                    raise serializers.ValidationError("End time must be after start time")
+                
+                # Validate break times if provided
+                break_start = item.get('break_start')
+                break_end = item.get('break_end')
+                
+                if break_start and break_end:
+                    if break_start >= break_end:
+                        raise serializers.ValidationError("Break end time must be after break start time")
+                    
+                    if not (start_time <= break_start <= break_end <= end_time):
+                        raise serializers.ValidationError("Break times must be within working hours")
+                        
+            except (TypeError, AttributeError):
+                raise serializers.ValidationError("Invalid time format")
+        
+        return value
+    
     def create(self, validated_data):
         regions = validated_data.pop('regions')
         services = validated_data.pop('services')
+        availability_data = validated_data.pop('availability', [])
         user = self.context['request'].user
         
         # Create professional profile
@@ -186,6 +235,26 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
                     service=service,
                     region=region
                 )
+        
+        # Create availability entries
+        for availability_item in availability_data:
+            try:
+                region_id = availability_item.get('region_id')
+                if region_id:
+                    region = Region.objects.get(id=region_id)
+                    ProfessionalAvailability.objects.create(
+                        professional=professional,
+                        region=region,
+                        weekday=availability_item.get('weekday', 0),
+                        start_time=availability_item.get('start_time'),
+                        end_time=availability_item.get('end_time'),
+                        break_start=availability_item.get('break_start'),
+                        break_end=availability_item.get('break_end'),
+                        is_active=availability_item.get('is_active', True)
+                    )
+            except (Region.DoesNotExist, KeyError, ValueError):
+                # Skip invalid availability data
+                continue
         
         return professional
 

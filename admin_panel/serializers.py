@@ -17,6 +17,37 @@ from bookings.serializers import (
     BookingPictureSerializer, BookingPictureUploadSerializer
 )
 
+# ===================== PROFESSIONAL AVAILABILITY SERIALIZER =====================
+
+class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
+    """
+    Serializer for professional availability data in admin operations
+    """
+    region_id = serializers.IntegerField()
+    weekday = serializers.IntegerField(min_value=0, max_value=6)  # 0=Monday, 6=Sunday
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
+    break_start = serializers.TimeField(required=False, allow_null=True)
+    break_end = serializers.TimeField(required=False, allow_null=True)
+    is_active = serializers.BooleanField(default=True)
+
+    def validate(self, attrs):
+        # Validate that end_time is after start_time
+        if attrs['end_time'] <= attrs['start_time']:
+            raise serializers.ValidationError("End time must be after start time")
+        
+        # Validate break times if provided
+        if attrs.get('break_start') and attrs.get('break_end'):
+            if attrs['break_end'] <= attrs['break_start']:
+                raise serializers.ValidationError("Break end time must be after break start time")
+            
+            # Validate break is within working hours
+            if (attrs['break_start'] < attrs['start_time'] or 
+                attrs['break_end'] > attrs['end_time']):
+                raise serializers.ValidationError("Break time must be within working hours")
+        
+        return attrs
+
 # ===================== USER MANAGEMENT SERIALIZERS =====================
 
 class AdminUserCreateSerializer(serializers.ModelSerializer):
@@ -117,13 +148,16 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         many=True
     )
     
+    # Availability data
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    
     class Meta:
         model = Professional
         fields = [
             'first_name', 'last_name', 'email', 'password', 'phone_number',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
-            'regions', 'services'
+            'regions', 'services', 'availability'
         ]
     
     def validate_email(self, value):
@@ -143,6 +177,7 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         regions = validated_data.pop('regions')
         services = validated_data.pop('services')
+        availability_data = validated_data.pop('availability', [])
         
         # Create user
         user = User.objects.create_user(
@@ -171,6 +206,24 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                     region=region
                 )
         
+        # Create availability entries
+        for availability_item in availability_data:
+            try:
+                region = Region.objects.get(id=availability_item['region_id'])
+                ProfessionalAvailability.objects.create(
+                    professional=professional,
+                    region=region,
+                    weekday=availability_item['weekday'],
+                    start_time=availability_item['start_time'],
+                    end_time=availability_item['end_time'],
+                    break_start=availability_item.get('break_start'),
+                    break_end=availability_item.get('break_end'),
+                    is_active=availability_item.get('is_active', True)
+                )
+            except Region.DoesNotExist:
+                # Skip if region doesn't exist
+                continue
+        
         return professional
     
     def to_representation(self, instance):
@@ -190,6 +243,10 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     user_is_active = serializers.BooleanField(source='user.is_active')
     regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
     services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
+    
+    # Availability data
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    
     class Meta:
         model = Professional
         fields = [
@@ -208,13 +265,40 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             instance.user.save()
         regions = validated_data.pop('regions', None)
         services = validated_data.pop('services', None)
+        availability_data = validated_data.pop('availability', None)
+        
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
+        
         if regions is not None:
             instance.regions.set(regions)
         if services is not None:
             instance.services.set(services)
+        
+        # Handle availability updates
+        if availability_data is not None:
+            # Clear existing availability for this professional
+            instance.availability_schedule.all().delete()
+            
+            # Create new availability entries
+            for availability_item in availability_data:
+                try:
+                    region = Region.objects.get(id=availability_item['region_id'])
+                    ProfessionalAvailability.objects.create(
+                        professional=instance,
+                        region=region,
+                        weekday=availability_item['weekday'],
+                        start_time=availability_item['start_time'],
+                        end_time=availability_item['end_time'],
+                        break_start=availability_item.get('break_start'),
+                        break_end=availability_item.get('break_end'),
+                        is_active=availability_item.get('is_active', True)
+                    )
+                except Region.DoesNotExist:
+                    # Skip if region doesn't exist
+                    continue
+        
         return instance
 
 
@@ -661,6 +745,7 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     total_earnings = serializers.SerializerMethodField()
     regions_served = serializers.SerializerMethodField()
     services_offered = serializers.SerializerMethodField()
+    availability_by_region = serializers.SerializerMethodField()
     
     class Meta:
         model = Professional
@@ -669,7 +754,7 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
             'date_joined', 'bio', 'experience_years', 'rating', 'total_reviews',
             'is_verified', 'is_active', 'travel_radius_km', 'min_booking_notice_hours',
             'commission_rate', 'total_bookings', 'total_earnings', 'regions_served',
-            'services_offered', 'verified_at', 'created_at'
+            'services_offered', 'availability_by_region', 'verified_at', 'created_at'
         ]
     
     def get_total_bookings(self, obj):
@@ -686,6 +771,33 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     def get_services_offered(self, obj):
         services = obj.services.all()
         return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]
+    
+    def get_availability_by_region(self, obj):
+        """Get availability grouped by region"""
+        availability_data = {}
+        
+        for availability in obj.availability_schedule.filter(is_active=True).select_related('region'):
+            region_id = availability.region.id
+            region_name = availability.region.name
+            
+            if region_id not in availability_data:
+                availability_data[region_id] = {
+                    'region_id': region_id,
+                    'region_name': region_name,
+                    'schedule': []
+                }
+            
+            availability_data[region_id]['schedule'].append({
+                'weekday': availability.weekday,
+                'weekday_name': availability.get_weekday_display(),
+                'start_time': availability.start_time.strftime('%H:%M'),
+                'end_time': availability.end_time.strftime('%H:%M'),
+                'break_start': availability.break_start.strftime('%H:%M') if availability.break_start else None,
+                'break_end': availability.break_end.strftime('%H:%M') if availability.break_end else None,
+                'is_active': availability.is_active
+            })
+        
+        return list(availability_data.values())
     
     
 
