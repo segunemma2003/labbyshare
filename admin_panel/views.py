@@ -383,6 +383,9 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
         return AdminProfessionalDetailSerializer
     
     def update(self, request, *args, **kwargs):
+        import logging
+        import traceback
+        
         try:
             logger = logging.getLogger(__name__)
             logger.debug(f"Updating professional {kwargs.get('pk')} with data: {request.data}")
@@ -392,8 +395,6 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             return response
             
         except Exception as e:
-            import logging
-            import traceback
             logger = logging.getLogger(__name__)
             logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
             logger.error(f"Request data: {request.data}")
@@ -2096,6 +2097,9 @@ def test_professional_update(request):
     """
     Test endpoint to debug professional update issues
     """
+    import logging
+    import traceback
+    
     logger = logging.getLogger(__name__)
     logger.debug(f"Test professional update called with data: {request.data}")
     
@@ -2117,7 +2121,6 @@ def test_professional_update(request):
                 'errors': serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
-        import traceback
         logger.error(f"Error in test_professional_update: {str(e)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
         return Response({
@@ -2135,6 +2138,7 @@ def debug_info(request):
     """
     import sys
     import django
+    import logging
     from django.conf import settings
     
     logger = logging.getLogger(__name__)
