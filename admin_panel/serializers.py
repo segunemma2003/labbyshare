@@ -564,54 +564,85 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                             region=region
                         )
         
-        # Handle availability updates
+        # Handle availability updates with better error handling
         if availability_data is not None:
+            import logging
+            logger = logging.getLogger(__name__)
+            
             # Clear existing availability for this professional
             instance.availability_schedule.all().delete()
             
             # Create new availability entries
-            for availability_item in availability_data:
+            for i, availability_item in enumerate(availability_data):
                 try:
-                    # Debug logging
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.debug(f"Processing availability item: {availability_item}")
+                    logger.debug(f"Processing availability item {i}: {availability_item}")
                     
-                    region_id = availability_item.get('region_id')
-                    if not region_id:
-                        logger.warning(f"Missing region_id in availability item: {availability_item}")
-                        continue
-                        
-                    region = Region.objects.get(id=region_id)
+                    # Validate required fields exist
+                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                    missing_fields = []
                     
-                    # Check for required fields
-                    required_fields = ['weekday', 'start_time', 'end_time']
-                    missing_fields = [field for field in required_fields if field not in availability_item]
+                    for field in required_fields:
+                        if field not in availability_item or availability_item[field] is None:
+                            missing_fields.append(field)
                     
                     if missing_fields:
-                        logger.warning(f"Missing required fields in availability item: {missing_fields}")
+                        logger.warning(f"Availability item {i} missing required fields: {missing_fields}")
+                        logger.warning(f"Item data: {availability_item}")
+                        continue  # Skip this item
+                    
+                    # Validate region exists
+                    region_id = availability_item['region_id']
+                    try:
+                        from regions.models import Region
+                        region = Region.objects.get(id=region_id)
+                    except Region.DoesNotExist:
+                        logger.warning(f"Region {region_id} does not exist for availability item {i}")
                         continue
                     
-                    ProfessionalAvailability.objects.create(
+                    # Validate time fields are not empty strings
+                    start_time = availability_item['start_time']
+                    end_time = availability_item['end_time']
+                    
+                    if not start_time or not end_time:
+                        logger.warning(f"Empty time values in availability item {i}: start_time='{start_time}', end_time='{end_time}'")
+                        continue
+                    
+                    # Create the availability entry
+                    from professionals.models import ProfessionalAvailability
+                    availability_entry = ProfessionalAvailability.objects.create(
                         professional=instance,
                         region=region,
                         weekday=availability_item['weekday'],
-                        start_time=availability_item['start_time'],
-                        end_time=availability_item['end_time'],
-                        break_start=availability_item.get('break_start'),
-                        break_end=availability_item.get('break_end'),
+                        start_time=start_time,
+                        end_time=end_time,
+                        break_start=availability_item.get('break_start') or None,
+                        break_end=availability_item.get('break_end') or None,
                         is_active=availability_item.get('is_active', True)
                     )
                     
-                    logger.debug(f"Successfully created availability for region {region_id}")
+                    logger.debug(f"Successfully created availability {availability_entry.id} for region {region_id}")
                     
-                except (Region.DoesNotExist, KeyError, ValueError) as e:
-                    # Log the specific error
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error creating availability: {str(e)}")
-                    logger.error(f"Availability item: {availability_item}")
-                    continue
+                except Exception as e:
+                    logger.error(f"Error creating availability item {i}: {str(e)}")
+                    logger.error(f"Availability item data: {availability_item}")
+                    logger.error(f"Exception type: {type(e).__name__}")
+                    
+                    # Create a more specific error response
+                    error_detail = f"Failed to process availability item {i + 1}"
+                    if 'end_time' in str(e):
+                        error_detail += ": Missing or invalid end_time"
+                    elif 'start_time' in str(e):
+                        error_detail += ": Missing or invalid start_time"
+                    elif 'region_id' in str(e):
+                        error_detail += ": Missing or invalid region_id"
+                    else:
+                        error_detail += f": {str(e)}"
+                    
+                    # Instead of continuing, raise a validation error that the frontend can understand
+                    from rest_framework import serializers
+                    raise serializers.ValidationError({
+                        'availability': [error_detail]
+                    })
         
         return instance
 
