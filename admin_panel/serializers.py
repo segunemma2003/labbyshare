@@ -322,7 +322,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     
     def to_internal_value(self, data):
         # Remove user fields from data before processing to avoid assignment error
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
         internal_data = data.copy()
         
         # Store user data separately
@@ -342,7 +342,10 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 'last_name': 'last_name',
                 'email': 'email', 
                 'phone_number': 'phone_number',
-                'user_is_active': 'is_active'
+                'user_is_active': 'is_active',
+                'date_of_birth': 'date_of_birth',
+                'gender': 'gender',
+                'profile_picture': 'profile_picture'
             }
             
             for serializer_field, user_field in field_mapping.items():
@@ -377,64 +380,29 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                             service=service,
                             region=region
                         )
-            else:
-                # If only regions changed, update ProfessionalService entries for existing services
-                existing_services = instance.services.all()
-                instance.professionalservice_set.all().delete()
-                for region in regions:
-                    for service in existing_services:
-                        ProfessionalService.objects.create(
-                            professional=instance,
-                            service=service,
-                            region=region
-                        )
-        elif services is not None:
-            # Only services changed, update ProfessionalService entries for existing regions
-            existing_regions = instance.regions.all()
-            instance.professionalservice_set.all().delete()
-            for region in existing_regions:
-                for service in services:
-                    ProfessionalService.objects.create(
-                        professional=instance,
-                        service=service,
-                        region=region
-                    )
-            instance.services.set(services)
         
         # Handle availability updates
         if availability_data is not None:
-            try:
-                # Clear existing availability for this professional
-                instance.availability_schedule.all().delete()
-                
-                # Create new availability entries
-                for availability_item in availability_data:
-                    try:
-                        region = Region.objects.get(id=availability_item['region_id'])
-                        ProfessionalAvailability.objects.create(
-                            professional=instance,
-                            region=region,
-                            weekday=availability_item['weekday'],
-                            start_time=availability_item['start_time'],
-                            end_time=availability_item['end_time'],
-                            break_start=availability_item.get('break_start'),
-                            break_end=availability_item.get('break_end'),
-                            is_active=availability_item.get('is_active', True)
-                        )
-                    except Region.DoesNotExist:
-                        # Skip if region doesn't exist
-                        continue
-                    except Exception as e:
-                        # Log any other errors but continue
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"Error creating availability for professional {instance.id}: {str(e)}")
-                        continue
-            except Exception as e:
-                # Log any errors in availability handling
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error updating availability for professional {instance.id}: {str(e)}")
+            # Clear existing availability for this professional
+            instance.availability_schedule.all().delete()
+            
+            # Create new availability entries
+            for availability_item in availability_data:
+                try:
+                    region = Region.objects.get(id=availability_item['region_id'])
+                    ProfessionalAvailability.objects.create(
+                        professional=instance,
+                        region=region,
+                        weekday=availability_item['weekday'],
+                        start_time=availability_item['start_time'],
+                        end_time=availability_item['end_time'],
+                        break_start=availability_item.get('break_start'),
+                        break_end=availability_item.get('break_end'),
+                        is_active=availability_item.get('is_active', True)
+                    )
+                except (Region.DoesNotExist, KeyError, ValueError):
+                    # Skip invalid availability data
+                    continue
         
         return instance
 

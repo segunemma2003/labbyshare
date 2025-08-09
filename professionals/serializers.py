@@ -473,10 +473,16 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def update(self, instance, validated_data):
-        # Handle user fields
+        # Handle user fields - extract fields that use source='user.field_name'
         user_data = {}
-        if 'user' in validated_data:
-            user_data = validated_data.pop('user')
+        user_fields = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender', 'profile_picture']
+        
+        for field in user_fields:
+            if field in validated_data:
+                user_data[field] = validated_data.pop(field)
+        
+        # Update user if there are user fields to update
+        if user_data:
             user = instance.user
             for field, value in user_data.items():
                 setattr(user, field, value)
