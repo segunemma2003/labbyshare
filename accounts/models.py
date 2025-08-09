@@ -6,13 +6,25 @@ import uuid
 
 
 def validate_image_file_extension(value):
-    """Validate that uploaded file is an image"""
+    """Validate that uploaded file has a valid image extension"""
     import os
     from django.core.exceptions import ValidationError
     
     # If value is None or empty, just return (allow null/empty values)
     if not value:
         return
+    
+    # Check if value is a list (which would cause the error)
+    if isinstance(value, list):
+        # If it's a list, take the first item if it exists
+        if len(value) > 0:
+            value = value[0]
+        else:
+            return
+    
+    # Ensure value is a file-like object
+    if not hasattr(value, 'name'):
+        raise ValidationError("Invalid file object provided.")
     
     ext = os.path.splitext(value.name)[1]  # Get the file extension
     valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
@@ -28,6 +40,18 @@ def validate_file_size(value):
     # If value is None or empty, just return (allow null/empty values)
     if not value:
         return
+    
+    # Check if value is a list (which would cause the error)
+    if isinstance(value, list):
+        # If it's a list, take the first item if it exists
+        if len(value) > 0:
+            value = value[0]
+        else:
+            return
+    
+    # Ensure value is a file-like object
+    if not hasattr(value, 'size'):
+        raise ValidationError("Invalid file object provided.")
     
     # 5MB limit
     filesize = value.size

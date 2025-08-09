@@ -449,11 +449,53 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
             'is_verified', 'is_active'
         ]
     
+    def to_internal_value(self, data):
+        """Add debugging to see what data is being processed"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"to_internal_value called with data type: {type(data)}")
+        logger.debug(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        if 'profile_picture' in data:
+            logger.debug(f"profile_picture type: {type(data['profile_picture'])}, value: {data['profile_picture']}")
+        
+        return super().to_internal_value(data)
+    
+    def run_validation(self, attrs):
+        """Add debugging to see what happens during validation"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"run_validation called with attrs type: {type(attrs)}")
+        logger.debug(f"Attrs keys: {list(attrs.keys()) if hasattr(attrs, 'keys') else 'No keys'}")
+        if 'profile_picture' in attrs:
+            logger.debug(f"profile_picture in attrs type: {type(attrs['profile_picture'])}, value: {attrs['profile_picture']}")
+        
+        return super().run_validation(attrs)
+    
     def validate_profile_picture(self, value):
         """Validate profile picture file"""
+        # Debug: Log the type and value for troubleshooting
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"validate_profile_picture called with value type: {type(value)}, value: {value}")
+        
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
+        
+        # Check if value is a list (which would cause the error)
+        if isinstance(value, list):
+            logger.debug(f"Value is a list with {len(value)} items: {value}")
+            # If it's a list, take the first item if it exists
+            if len(value) > 0:
+                value = value[0]
+                logger.debug(f"Taking first item from list: {value}")
+            else:
+                return None
+        
+        # Ensure value is a file-like object
+        if not hasattr(value, 'name') or not hasattr(value, 'size'):
+            logger.error(f"Value is not a file-like object. Type: {type(value)}, hasattr name: {hasattr(value, 'name')}, hasattr size: {hasattr(value, 'size')}")
+            raise serializers.ValidationError("Invalid file object provided.")
             
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
@@ -487,85 +529,96 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def update(self, instance, validated_data):
-        # Handle user fields - extract fields that use source='user.field_name'
-        user_data = {}
-        user_fields = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender']
-        
-        for field in user_fields:
-            if field in validated_data:
-                user_data[field] = validated_data.pop(field)
-        
-        # Update user if there are user fields to update
-        if user_data:
-            user = instance.user
-            for field, value in user_data.items():
-                if value is not None:  # Only update if value is not None
-                    setattr(user, field, value)
-            user.save()
-        
-        # Handle profile picture separately
-        profile_picture = validated_data.pop('profile_picture', None)
-        if profile_picture is not None:
-            user = instance.user
-            user.profile_picture = profile_picture
-            user.save()
-        
-        # Handle regions and services
-        regions = validated_data.pop('regions', None)
-        services = validated_data.pop('services', None)
-        availability_data = validated_data.pop('availability', None)
-        
-        # Update professional fields
-        for field, value in validated_data.items():
-            if value is not None:  # Only update if value is not None
-                setattr(instance, field, value)
-        
-        # Update regions if provided
-        if regions is not None:
-            instance.regions.set(regions)
-        
-        # Update services if provided
-        if services is not None:
-            # Clear existing services and create new ones
-            from .models import ProfessionalService
-            instance.professionalservice_set.all().delete()
-            for region in instance.regions.all():
-                for service in services:
-                    ProfessionalService.objects.create(
-                        professional=instance,
-                        service=service,
-                        region=region
-                    )
-        
-        # Update availability if provided
-        if availability_data is not None:
-            # Clear existing availability for this professional
-            from .models import ProfessionalAvailability
-            from regions.models import Region
-            instance.availability_schedule.all().delete()
+        try:
+            # Handle user fields - extract fields that use source='user.field_name'
+            user_data = {}
+            user_fields = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender']
             
-            # Create new availability entries
-            for availability_item in availability_data:
-                try:
-                    region_id = availability_item.get('region_id')
-                    if region_id:
-                        region = Region.objects.get(id=region_id)
-                        ProfessionalAvailability.objects.create(
+            for field in user_fields:
+                if field in validated_data:
+                    user_data[field] = validated_data.pop(field)
+            
+            # Update user if there are user fields to update
+            if user_data:
+                user = instance.user
+                for field, value in user_data.items():
+                    if value is not None:  # Only update if value is not None
+                        setattr(user, field, value)
+                user.save()
+            
+            # Handle profile picture separately
+            profile_picture = validated_data.pop('profile_picture', None)
+            if profile_picture is not None:
+                user = instance.user
+                user.profile_picture = profile_picture
+                user.save()
+            
+            # Handle regions and services
+            regions = validated_data.pop('regions', None)
+            services = validated_data.pop('services', None)
+            availability_data = validated_data.pop('availability', None)
+            
+            # Update professional fields
+            for field, value in validated_data.items():
+                if value is not None:  # Only update if value is not None
+                    setattr(instance, field, value)
+            
+            # Update regions if provided
+            if regions is not None:
+                instance.regions.set(regions)
+            
+            # Update services if provided
+            if services is not None:
+                # Clear existing services and create new ones
+                from .models import ProfessionalService
+                instance.professionalservice_set.all().delete()
+                for region in instance.regions.all():
+                    for service in services:
+                        ProfessionalService.objects.create(
                             professional=instance,
-                            region=region,
-                            weekday=availability_item.get('weekday', 0),
-                            start_time=availability_item.get('start_time'),
-                            end_time=availability_item.get('end_time'),
-                            break_start=availability_item.get('break_start'),
-                            break_end=availability_item.get('break_end'),
-                            is_active=availability_item.get('is_active', True)
+                            service=service,
+                            region=region
                         )
-                except (Region.DoesNotExist, KeyError, ValueError):
-                    # Skip invalid availability data
-                    continue
-        
-        instance.save()
-        return instance
+            
+            # Update availability if provided
+            if availability_data is not None:
+                # Clear existing availability for this professional
+                from .models import ProfessionalAvailability
+                from regions.models import Region
+                instance.availability_schedule.all().delete()
+                
+                # Create new availability entries
+                for availability_item in availability_data:
+                    try:
+                        region_id = availability_item.get('region_id')
+                        if region_id:
+                            region = Region.objects.get(id=region_id)
+                            ProfessionalAvailability.objects.create(
+                                professional=instance,
+                                region=region,
+                                weekday=availability_item.get('weekday', 0),
+                                start_time=availability_item.get('start_time'),
+                                end_time=availability_item.get('end_time'),
+                                break_start=availability_item.get('break_start'),
+                                break_end=availability_item.get('break_end'),
+                                is_active=availability_item.get('is_active', True)
+                            )
+                    except (Region.DoesNotExist, KeyError, ValueError):
+                        # Skip invalid availability data
+                        continue
+            
+            instance.save()
+            return instance
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in ProfessionalUpdateSerializer.update: {str(e)}")
+            logger.error(f"Exception type: {type(e)}")
+            logger.error(f"Validated data keys: {list(validated_data.keys()) if hasattr(validated_data, 'keys') else 'No keys'}")
+            if 'profile_picture' in validated_data:
+                logger.error(f"profile_picture type: {type(validated_data['profile_picture'])}")
+            raise
 
 
 class ProfessionalAdminDetailSerializer(serializers.ModelSerializer):

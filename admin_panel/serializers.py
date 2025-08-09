@@ -174,6 +174,18 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
+        
+        # Check if value is a list (which would cause the error)
+        if isinstance(value, list):
+            # If it's a list, take the first item if it exists
+            if len(value) > 0:
+                value = value[0]
+            else:
+                return None
+        
+        # Ensure value is a file-like object
+        if not hasattr(value, 'name') or not hasattr(value, 'size'):
+            raise serializers.ValidationError("Invalid file object provided.")
             
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
@@ -316,6 +328,18 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
+        
+        # Check if value is a list (which would cause the error)
+        if isinstance(value, list):
+            # If it's a list, take the first item if it exists
+            if len(value) > 0:
+                value = value[0]
+            else:
+                return None
+        
+        # Ensure value is a file-like object
+        if not hasattr(value, 'name') or not hasattr(value, 'size'):
+            raise serializers.ValidationError("Invalid file object provided.")
             
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:

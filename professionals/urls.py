@@ -26,6 +26,9 @@ urlpatterns = [
     # Document upload
     path('documents/', views.DocumentUploadView.as_view(), name='document_upload'),
     
+    # Test endpoint for debugging
+    path('test-upload/', views.test_file_upload, name='test_file_upload'),
+    
     # Admin views
     path('admin/<int:id>/', views.AdminProfessionalDetailView.as_view(), name='admin_professional_detail'),
 ]
