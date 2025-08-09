@@ -383,31 +383,156 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
         return AdminProfessionalDetailSerializer
     
     def update(self, request, *args, **kwargs):
+        """
+        Enhanced update method with proper multipart form data handling
+        """
         import logging
         import traceback
         
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Updating professional {kwargs.get('pk')}")
+        
         try:
-            logger = logging.getLogger(__name__)
-            logger.debug(f"Updating professional {kwargs.get('pk')} with data: {request.data}")
+            # Get the instance
+            instance = self.get_object()
             
-            response = super().update(request, *args, **kwargs)
-            logger.debug(f"Professional update successful: {response.data}")
-            return response
+            # Log incoming request data for debugging
+            logger.debug(f"Request content type: {request.content_type}")
+            logger.debug(f"Request data keys: {list(request.data.keys())}")
+            logger.debug(f"Request files keys: {list(request.FILES.keys())}")
             
+            # Handle multipart form data preprocessing
+            data = request.data.copy()
+            
+            # Special handling for profile_picture
+            if 'profile_picture' in request.FILES:
+                profile_picture = request.FILES['profile_picture']
+                logger.debug(f"Profile picture from FILES: {type(profile_picture)} - {profile_picture}")
+                data['profile_picture'] = profile_picture
+            elif 'profile_picture' in request.data:
+                # Handle case where profile_picture is in data but not FILES
+                pp_value = request.data['profile_picture']
+                logger.debug(f"Profile picture from data: {type(pp_value)} - {pp_value}")
+                if isinstance(pp_value, (list, tuple)):
+                    if len(pp_value) == 1:
+                        data['profile_picture'] = pp_value[0]
+                    elif len(pp_value) == 0:
+                        data['profile_picture'] = None
+                    else:
+                        logger.error(f"Multiple profile pictures detected: {len(pp_value)}")
+                        # Let the serializer handle this error
+                elif isinstance(pp_value, str) and pp_value.strip() == "":
+                    data['profile_picture'] = None
+            
+            # Handle services field - they might come as multiple values
+            if 'services' in data:
+                services_data = data.getlist('services') if hasattr(data, 'getlist') else data.get('services')
+                if services_data:
+                    if not isinstance(services_data, (list, tuple)):
+                        services_data = [services_data]
+                    # Convert string IDs to integers
+                    try:
+                        services_data = [int(sid) for sid in services_data if sid]
+                        data['services'] = services_data
+                        logger.debug(f"Processed services: {services_data}")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error processing services: {e}")
+                        return Response({
+                            'error': 'Invalid service IDs provided',
+                            'details': str(e)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle regions field - similar to services
+            if 'regions' in data:
+                regions_data = data.getlist('regions') if hasattr(data, 'getlist') else data.get('regions')
+                if regions_data:
+                    if not isinstance(regions_data, (list, tuple)):
+                        regions_data = [regions_data]
+                    # Convert string IDs to integers
+                    try:
+                        regions_data = [int(rid) for rid in regions_data if rid]
+                        data['regions'] = regions_data
+                        logger.debug(f"Processed regions: {regions_data}")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Error processing regions: {e}")
+                        return Response({
+                            'error': 'Invalid region IDs provided',
+                            'details': str(e)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle availability data
+            availability_data = []
+            i = 0
+            while f'availability[{i}][region_id]' in data:
+                try:
+                    availability_item = {
+                        'region_id': int(data.get(f'availability[{i}][region_id]')),
+                        'weekday': int(data.get(f'availability[{i}][weekday]')),
+                        'start_time': data.get(f'availability[{i}][start_time]'),
+                        'end_time': data.get(f'availability[{i}][end_time]'),
+                        'break_start': data.get(f'availability[{i}][break_start]') or None,
+                        'break_end': data.get(f'availability[{i}][break_end]') or None,
+                        'is_active': data.get(f'availability[{i}][is_active]', 'true').lower() == 'true'
+                    }
+                    
+                    # Validate that required fields are present
+                    if availability_item['start_time'] and availability_item['end_time']:
+                        availability_data.append(availability_item)
+                        logger.debug(f"Added availability item {i}: {availability_item}")
+                    else:
+                        logger.warning(f"Skipping availability item {i} - missing time data")
+                    
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing availability item {i}: {e}")
+                    return Response({
+                        'error': f'Invalid availability data for item {i}',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                i += 1
+            
+            if availability_data:
+                data['availability'] = availability_data
+                logger.debug(f"Processed {len(availability_data)} availability items")
+            
+            # Create serializer with processed data
+            serializer = self.get_serializer(instance, data=data, partial=True)
+            
+            if serializer.is_valid():
+                # Perform the update
+                updated_instance = serializer.save()
+                
+                # Return the updated instance data
+                response_serializer = AdminProfessionalDetailSerializer(updated_instance, context={'request': request})
+                
+                # Log the successful update
+                AdminActivity.objects.create(
+                    admin_user=request.user,
+                    activity_type='professional_verification',
+                    description=f"Updated professional: {updated_instance.user.email}",
+                    target_model='Professional',
+                    target_id=str(updated_instance.id)
+                )
+                
+                logger.info(f"Successfully updated professional {updated_instance.id}")
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            else:
+                logger.error(f"Serializer validation errors: {serializer.errors}")
+                return Response({
+                    'error': 'Validation failed',
+                    'details': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
             logger.error(f"Request data: {request.data}")
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
             
-            return Response(
-                {
-                    'error': 'Failed to update professional. Please check the logs for details.',
-                    'details': str(e),
-                    'type': type(e).__name__
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'error': 'Failed to update professional. Please check the logs for details.',
+                'details': str(e),
+                'type': type(e).__name__
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ===================== CATEGORY MANAGEMENT =====================
 
