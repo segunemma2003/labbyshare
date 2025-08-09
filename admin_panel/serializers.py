@@ -147,13 +147,15 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     profile_picture = serializers.ImageField(required=False)
     
     # Professional fields
-    regions = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.filter(is_active=True),
-        many=True
+    regions = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True
     )
-    services = serializers.PrimaryKeyRelatedField(
-        queryset=Service.objects.filter(is_active=True),
-        many=True
+    services = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True
     )
     
     # Availability data
@@ -412,7 +414,11 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             **user_fields
         )
         user.set_password(password)
-        user.current_region = regions[0] if regions else None
+        
+        # Convert region IDs to Region objects
+        from regions.models import Region
+        region_objects = Region.objects.filter(id__in=regions, is_active=True)
+        user.current_region = region_objects[0] if region_objects else None
         user.save()
         
         # Create professional
@@ -422,11 +428,15 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         )
         
         # Set regions and services
-        professional.regions.set(regions)
+        professional.regions.set(region_objects)
+        
+        # Convert service IDs to Service objects
+        from services.models import Service
+        service_objects = Service.objects.filter(id__in=services, is_active=True)
         
         # Create ProfessionalService entries
-        for region in regions:
-            for service in services:
+        for region in region_objects:
+            for service in service_objects:
                 ProfessionalService.objects.create(
                     professional=professional,
                     service=service,
@@ -497,8 +507,16 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     gender = serializers.CharField(required=False)
     profile_picture = serializers.ImageField(required=False, allow_null=True)
     user_is_active = serializers.BooleanField(required=False)
-    regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
-    services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
+    regions = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True
+    )
+    services = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True
+    )
     
     # Professional status fields
     is_verified = serializers.BooleanField(required=False)
@@ -564,7 +582,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             regions_value = data.getlist('regions') if hasattr(data, 'getlist') else data['regions']
             logger.debug(f"Raw regions value: {regions_value}, type: {type(regions_value)}")
             
-            if isinstance(regions_value, (list, tuple)):
+            if regions_value is None or regions_value == '':
+                data['regions'] = []
+            elif isinstance(regions_value, (list, tuple)):
                 # Convert string IDs to integers
                 try:
                     processed_regions = [int(r) for r in regions_value if r]
@@ -589,7 +609,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             services_value = data.getlist('services') if hasattr(data, 'getlist') else data['services']
             logger.debug(f"Raw services value: {services_value}, type: {type(services_value)}")
             
-            if isinstance(services_value, (list, tuple)):
+            if services_value is None or services_value == '':
+                data['services'] = []
+            elif isinstance(services_value, (list, tuple)):
                 # Convert string IDs to integers
                 try:
                     processed_services = [int(s) for s in services_value if s]
@@ -867,23 +889,30 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 # Handle regions and services updates
                 if regions is not None:
                     try:
-                        instance.regions.set(regions)
-                        logger.debug(f"Set regions: {[r.id for r in regions]}")
+                        # Convert region IDs to Region objects
+                        from regions.models import Region
+                        region_objects = Region.objects.filter(id__in=regions, is_active=True)
+                        instance.regions.set(region_objects)
+                        logger.debug(f"Set regions: {[r.id for r in region_objects]}")
                         
                         # Update ProfessionalService entries if services are also provided
                         if services is not None:
+                            # Convert service IDs to Service objects
+                            from services.models import Service
+                            service_objects = Service.objects.filter(id__in=services, is_active=True)
+                            
                             # Clear existing ProfessionalService entries
                             instance.professionalservice_set.all().delete()
                             
                             # Create new ProfessionalService entries for each region-service combination
-                            for region in regions:
-                                for service in services:
+                            for region in region_objects:
+                                for service in service_objects:
                                     ProfessionalService.objects.create(
                                         professional=instance,
                                         service=service,
                                         region=region
                                     )
-                            logger.debug(f"Created ProfessionalService entries for {len(regions)} regions and {len(services)} services")
+                            logger.debug(f"Created ProfessionalService entries for {len(region_objects)} regions and {len(service_objects)} services")
                     except Exception as e:
                         logger.error(f"Error updating regions/services: {str(e)}")
                         raise serializers.ValidationError({"regions_services": f"Failed to update regions and services: {str(e)}"})
