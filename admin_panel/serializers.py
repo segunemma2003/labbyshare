@@ -176,20 +176,28 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     
     def validate_profile_picture(self, value):
         """Validate profile picture file"""
+        # Debug: Log the type and value for troubleshooting
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"validate_profile_picture called with value type: {type(value)}, value: {value}")
+        
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
         
         # Check if value is a list (which would cause the error)
         if isinstance(value, list):
+            logger.debug(f"Value is a list with {len(value)} items: {value}")
             # If it's a list, take the first item if it exists
             if len(value) > 0:
                 value = value[0]
+                logger.debug(f"Taking first item from list: {value}")
             else:
                 return None
         
         # Ensure value is a file-like object
         if not hasattr(value, 'name') or not hasattr(value, 'size'):
+            logger.error(f"Value is not a file-like object. Type: {type(value)}, hasattr name: {hasattr(value, 'name')}, hasattr size: {hasattr(value, 'size')}")
             raise serializers.ValidationError("Invalid file object provided.")
             
         # Check file size (5MB limit)
@@ -222,6 +230,54 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                 )
     
         return value
+    
+    def to_internal_value(self, data):
+        """Parse form data format for availability fields"""
+        # Add debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data type: {type(data)}")
+        logger.debug(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        # Parse availability data from form data format (availability[0][field])
+        availability_data = []
+        availability_keys = [key for key in data.keys() if key.startswith('availability[')]
+        
+        logger.debug(f"Found availability keys: {availability_keys}")
+        
+        if availability_keys:
+            # Group availability items by index
+            availability_items = {}
+            for key in availability_keys:
+                # Extract index and field name from key like "availability[0][end_time]"
+                import re
+                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
+                if match:
+                    index = int(match.group(1))
+                    field_name = match.group(2)
+                    
+                    if index not in availability_items:
+                        availability_items[index] = {}
+                    
+                    availability_items[index][field_name] = data[key]
+                    logger.debug(f"Parsed availability[{index}][{field_name}] = {data[key]}")
+            
+            # Convert to list format
+            for index in sorted(availability_items.keys()):
+                availability_data.append(availability_items[index])
+            
+            logger.debug(f"Parsed availability data: {availability_data}")
+            
+            # Remove the original availability keys and add the parsed data
+            data = data.copy()
+            for key in availability_keys:
+                data.pop(key, None)
+            
+            data['availability'] = availability_data
+        
+        logger.debug(f"Final data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        return super().to_internal_value(data)
     
     def create(self, validated_data):
         # Extract user fields
@@ -274,7 +330,26 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         # Create availability entries
         for availability_item in availability_data:
             try:
-                region = Region.objects.get(id=availability_item['region_id'])
+                # Debug logging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Processing availability item: {availability_item}")
+                
+                region_id = availability_item.get('region_id')
+                if not region_id:
+                    logger.warning(f"Missing region_id in availability item: {availability_item}")
+                    continue
+                    
+                region = Region.objects.get(id=region_id)
+                
+                # Check for required fields
+                required_fields = ['weekday', 'start_time', 'end_time']
+                missing_fields = [field for field in required_fields if field not in availability_item]
+                
+                if missing_fields:
+                    logger.warning(f"Missing required fields in availability item: {missing_fields}")
+                    continue
+                
                 ProfessionalAvailability.objects.create(
                     professional=professional,
                     region=region,
@@ -285,8 +360,15 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                     break_end=availability_item.get('break_end'),
                     is_active=availability_item.get('is_active', True)
                 )
-            except Region.DoesNotExist:
-                # Skip if region doesn't exist
+                
+                logger.debug(f"Successfully created availability for region {region_id}")
+                
+            except (Region.DoesNotExist, KeyError, ValueError) as e:
+                # Log the specific error
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error creating availability: {str(e)}")
+                logger.error(f"Availability item: {availability_item}")
                 continue
         
         return professional
@@ -378,6 +460,12 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def to_internal_value(self, data):
+        # Add debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"to_internal_value called with data type: {type(data)}")
+        logger.debug(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
         # Remove user fields from data before processing to avoid assignment error
         user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
         internal_data = data.copy()
@@ -387,6 +475,43 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         for field in user_fields:
             if field in internal_data:
                 self.user_data[field] = internal_data.pop(field)
+        
+        # Parse availability data from form data format (availability[0][field])
+        availability_data = []
+        availability_keys = [key for key in internal_data.keys() if key.startswith('availability[')]
+        
+        logger.debug(f"Found availability keys: {availability_keys}")
+        
+        if availability_keys:
+            # Group availability items by index
+            availability_items = {}
+            for key in availability_keys:
+                # Extract index and field name from key like "availability[0][end_time]"
+                import re
+                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
+                if match:
+                    index = int(match.group(1))
+                    field_name = match.group(2)
+                    
+                    if index not in availability_items:
+                        availability_items[index] = {}
+                    
+                    availability_items[index][field_name] = internal_data[key]
+                    logger.debug(f"Parsed availability[{index}][{field_name}] = {internal_data[key]}")
+            
+            # Convert to list format
+            for index in sorted(availability_items.keys()):
+                availability_data.append(availability_items[index])
+            
+            logger.debug(f"Parsed availability data: {availability_data}")
+            
+            # Remove the original availability keys and add the parsed data
+            for key in availability_keys:
+                internal_data.pop(key, None)
+            
+            internal_data['availability'] = availability_data
+        
+        logger.debug(f"Final internal_data keys: {list(internal_data.keys()) if hasattr(internal_data, 'keys') else 'No keys'}")
         
         return super().to_internal_value(internal_data)
     
