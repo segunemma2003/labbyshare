@@ -175,34 +175,55 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         return value
     
     def validate_profile_picture(self, value):
-        """Validate profile picture file"""
-        # Debug: Log the type and value for troubleshooting
+        """Enhanced profile picture validation with better error handling"""
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"validate_profile_picture called with value type: {type(value)}, value: {value}")
         
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
         
-        # Check if value is a list (which would cause the error)
+        logger.debug(f"Validating profile picture: type={type(value)}, value={value}")
+        
+        # Handle case where value might be a list (common with multipart form data)
         if isinstance(value, list):
-            logger.debug(f"Value is a list with {len(value)} items: {value}")
-            # If it's a list, take the first item if it exists
-            if len(value) > 0:
-                value = value[0]
-                logger.debug(f"Taking first item from list: {value}")
-            else:
+            logger.warning(f"Profile picture received as list with {len(value)} items")
+            if len(value) == 0:
                 return None
+            elif len(value) == 1:
+                value = value[0]
+                logger.debug(f"Extracted single file from list: {value}")
+            else:
+                raise serializers.ValidationError(
+                    "Only one profile picture can be uploaded at a time. Please select a single image file."
+                )
         
         # Ensure value is a file-like object
-        if not hasattr(value, 'name') or not hasattr(value, 'size'):
-            logger.error(f"Value is not a file-like object. Type: {type(value)}, hasattr name: {hasattr(value, 'name')}, hasattr size: {hasattr(value, 'size')}")
-            raise serializers.ValidationError("Invalid file object provided.")
+        if not hasattr(value, 'name'):
+            logger.error(f"Profile picture missing 'name' attribute: {type(value)}")
+            raise serializers.ValidationError(
+                "Invalid file object provided. Please upload a valid image file."
+            )
             
+        if not hasattr(value, 'size'):
+            logger.error(f"Profile picture missing 'size' attribute: {type(value)}")
+            raise serializers.ValidationError(
+                "Unable to determine file size. Please upload a valid image file."
+            )
+        
+        # Validate file name exists
+        if not value.name:
+            raise serializers.ValidationError(
+                "File must have a valid name. Please select a proper image file."
+            )
+        
+        logger.debug(f"Profile picture validation - name: {value.name}, size: {value.size}")
+        
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError("Image file too large. Maximum size is 5MB.")
+            raise serializers.ValidationError(
+                f"Image file is too large ({value.size} bytes). Maximum file size is 5MB. Please compress your image or choose a smaller file."
+            )
         
         # Check file type - support all common image formats
         allowed_types = [
@@ -214,8 +235,8 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         if hasattr(value, 'content_type') and value.content_type:
             if value.content_type not in allowed_types:
                 raise serializers.ValidationError(
-                    f"Unsupported image format: {value.content_type}. Please upload an image file in one of these formats: "
-                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                    f"Unsupported image format: {value.content_type}. "
+                    f"Please upload an image in one of these formats: JPEG, PNG, GIF, BMP, WebP, TIFF, or SVG."
                 )
         
         # Check file extension as fallback
@@ -225,9 +246,40 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
             if file_extension not in allowed_extensions:
                 raise serializers.ValidationError(
-                    f"Unsupported file extension: {file_extension}. Please upload an image file in one of these formats: "
-                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                    f"Unsupported file extension: {file_extension}. "
+                    f"Please upload an image with one of these extensions: "
+                    f"{', '.join(allowed_extensions)}"
                 )
+        
+        # Additional validation: check if it's actually an image
+        try:
+            from PIL import Image
+            import io
+            
+            # Reset file pointer to beginning
+            if hasattr(value, 'seek'):
+                value.seek(0)
+            
+            # Try to open and verify the image
+            image = Image.open(value)
+            image.verify()
+            
+            # Reset file pointer again after verification
+            if hasattr(value, 'seek'):
+                value.seek(0)
+                
+            logger.debug(f"Profile picture validation successful for: {value.name}")
+                
+        except ImportError:
+            # PIL not available, skip image verification
+            logger.warning("PIL not available, skipping image verification")
+            pass
+        except Exception as e:
+            logger.error(f"Image validation failed for {value.name}: {str(e)}")
+            raise serializers.ValidationError(
+                f"Invalid image file. The file appears to be corrupted or is not a valid image. "
+                f"Please try uploading a different image file. Error: {str(e)}"
+            )
     
         return value
     
@@ -411,26 +463,44 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         ]
     
     def validate_profile_picture(self, value):
-        """Validate profile picture file"""
+        """Enhanced profile picture validation with better error handling"""
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
             return value
         
-        # Check if value is a list (which would cause the error)
+        # Handle case where value might be a list (common with multipart form data)
         if isinstance(value, list):
-            # If it's a list, take the first item if it exists
-            if len(value) > 0:
+            if len(value) == 0:
+                return None
+            elif len(value) == 1:
                 value = value[0]
             else:
-                return None
+                raise serializers.ValidationError(
+                    "Only one profile picture can be uploaded at a time. Please select a single image file."
+                )
         
         # Ensure value is a file-like object
-        if not hasattr(value, 'name') or not hasattr(value, 'size'):
-            raise serializers.ValidationError("Invalid file object provided.")
+        if not hasattr(value, 'name'):
+            raise serializers.ValidationError(
+                "Invalid file object provided. Please upload a valid image file."
+            )
             
+        if not hasattr(value, 'size'):
+            raise serializers.ValidationError(
+                "Unable to determine file size. Please upload a valid image file."
+            )
+        
+        # Validate file name exists
+        if not value.name:
+            raise serializers.ValidationError(
+                "File must have a valid name. Please select a proper image file."
+            )
+        
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError("Image file too large. Maximum size is 5MB.")
+            raise serializers.ValidationError(
+                "Image file is too large. Maximum file size is 5MB. Please compress your image or choose a smaller file."
+            )
         
         # Check file type - support all common image formats
         allowed_types = [
@@ -442,8 +512,8 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         if hasattr(value, 'content_type') and value.content_type:
             if value.content_type not in allowed_types:
                 raise serializers.ValidationError(
-                    f"Unsupported image format: {value.content_type}. Please upload an image file in one of these formats: "
-                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                    f"Unsupported image format: {value.content_type}. "
+                    f"Please upload an image in one of these formats: JPEG, PNG, GIF, BMP, WebP, TIFF, or SVG."
                 )
         
         # Check file extension as fallback
@@ -453,9 +523,36 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
             if file_extension not in allowed_extensions:
                 raise serializers.ValidationError(
-                    f"Unsupported file extension: {file_extension}. Please upload an image file in one of these formats: "
-                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                    f"Unsupported file extension: {file_extension}. "
+                    f"Please upload an image with one of these extensions: "
+                    f"{', '.join(allowed_extensions)}"
                 )
+        
+        # Additional validation: check if it's actually an image
+        try:
+            from PIL import Image
+            import io
+            
+            # Reset file pointer to beginning
+            if hasattr(value, 'seek'):
+                value.seek(0)
+            
+            # Try to open and verify the image
+            image = Image.open(value)
+            image.verify()
+            
+            # Reset file pointer again after verification
+            if hasattr(value, 'seek'):
+                value.seek(0)
+                
+        except ImportError:
+            # PIL not available, skip image verification
+            pass
+        except Exception as e:
+            raise serializers.ValidationError(
+                f"Invalid image file. The file appears to be corrupted or is not a valid image. "
+                f"Please try uploading a different image file."
+            )
     
         return value
     
