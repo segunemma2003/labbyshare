@@ -410,12 +410,12 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
     Professional profile update serializer - allows patching all fields
     """
     # User fields that can be updated
-    first_name = serializers.CharField(source='user.first_name', required=False)
-    last_name = serializers.CharField(source='user.last_name', required=False)
-    phone_number = serializers.CharField(source='user.phone_number', required=False)
-    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
-    gender = serializers.CharField(source='user.gender', required=False)
-    profile_picture = serializers.ImageField(source='user.profile_picture', required=False)
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    phone_number = serializers.CharField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+    gender = serializers.CharField(required=False)
+    profile_picture = serializers.ImageField(required=False)
     
     # Professional fields
     regions = serializers.PrimaryKeyRelatedField(
@@ -464,18 +464,32 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
             'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 
             'image/bmp', 'image/webp', 'image/tiff', 'image/svg+xml'
         ]
-        if hasattr(value, 'content_type') and value.content_type not in allowed_types:
-            raise serializers.ValidationError(
-                "Unsupported image format. Please upload an image file in one of these formats: "
-                "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
-            )
+        
+        # Check content type if available
+        if hasattr(value, 'content_type') and value.content_type:
+            if value.content_type not in allowed_types:
+                raise serializers.ValidationError(
+                    f"Unsupported image format: {value.content_type}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
+        
+        # Check file extension as fallback
+        if hasattr(value, 'name') and value.name:
+            import os
+            file_extension = os.path.splitext(value.name)[1].lower()
+            allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            if file_extension not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file extension: {file_extension}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
     
         return value
     
     def update(self, instance, validated_data):
         # Handle user fields - extract fields that use source='user.field_name'
         user_data = {}
-        user_fields = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender', 'profile_picture']
+        user_fields = ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender']
         
         for field in user_fields:
             if field in validated_data:
@@ -485,7 +499,15 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
         if user_data:
             user = instance.user
             for field, value in user_data.items():
-                setattr(user, field, value)
+                if value is not None:  # Only update if value is not None
+                    setattr(user, field, value)
+            user.save()
+        
+        # Handle profile picture separately
+        profile_picture = validated_data.pop('profile_picture', None)
+        if profile_picture is not None:
+            user = instance.user
+            user.profile_picture = profile_picture
             user.save()
         
         # Handle regions and services
@@ -495,7 +517,8 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
         
         # Update professional fields
         for field, value in validated_data.items():
-            setattr(instance, field, value)
+            if value is not None:  # Only update if value is not None
+                setattr(instance, field, value)
         
         # Update regions if provided
         if regions is not None:

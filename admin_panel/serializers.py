@@ -184,11 +184,25 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 
             'image/bmp', 'image/webp', 'image/tiff', 'image/svg+xml'
         ]
-        if hasattr(value, 'content_type') and value.content_type not in allowed_types:
-            raise serializers.ValidationError(
-                "Unsupported image format. Please upload an image file in one of these formats: "
-                "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
-            )
+        
+        # Check content type if available
+        if hasattr(value, 'content_type') and value.content_type:
+            if value.content_type not in allowed_types:
+                raise serializers.ValidationError(
+                    f"Unsupported image format: {value.content_type}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
+        
+        # Check file extension as fallback
+        if hasattr(value, 'name') and value.name:
+            import os
+            file_extension = os.path.splitext(value.name)[1].lower()
+            allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            if file_extension not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file extension: {file_extension}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
     
         return value
     
@@ -270,14 +284,14 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     Update professional by admin
     """
     # User fields
-    first_name = serializers.CharField(source='user.first_name')
-    last_name = serializers.CharField(source='user.last_name')
-    email = serializers.EmailField(source='user.email')
-    phone_number = serializers.CharField(source='user.phone_number', required=False)
-    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
-    gender = serializers.CharField(source='user.gender', required=False)
-    profile_picture = serializers.ImageField(source='user.profile_picture', required=False)
-    user_is_active = serializers.BooleanField(source='user.is_active')
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
+    phone_number = serializers.CharField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+    gender = serializers.CharField(required=False)
+    profile_picture = serializers.ImageField(required=False)
+    user_is_active = serializers.BooleanField(required=False)
     regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
     services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
     
@@ -312,11 +326,25 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 
             'image/bmp', 'image/webp', 'image/tiff', 'image/svg+xml'
         ]
-        if hasattr(value, 'content_type') and value.content_type not in allowed_types:
-            raise serializers.ValidationError(
-                "Unsupported image format. Please upload an image file in one of these formats: "
-                "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
-            )
+        
+        # Check content type if available
+        if hasattr(value, 'content_type') and value.content_type:
+            if value.content_type not in allowed_types:
+                raise serializers.ValidationError(
+                    f"Unsupported image format: {value.content_type}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
+        
+        # Check file extension as fallback
+        if hasattr(value, 'name') and value.name:
+            import os
+            file_extension = os.path.splitext(value.name)[1].lower()
+            allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            if file_extension not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file extension: {file_extension}. Please upload an image file in one of these formats: "
+                    "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+                )
     
         return value
     
@@ -349,7 +377,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             }
             
             for serializer_field, user_field in field_mapping.items():
-                if serializer_field in self.user_data:
+                if serializer_field in self.user_data and self.user_data[serializer_field] is not None:
                     setattr(instance.user, user_field, self.user_data[serializer_field])
             instance.user.save()
         
@@ -360,7 +388,8 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         
         # Update professional fields (excluding user fields)
         for field, value in validated_data.items():
-            setattr(instance, field, value)
+            if value is not None:  # Only update if value is not None
+                setattr(instance, field, value)
         instance.save()
         
         # Handle regions and services updates
