@@ -444,21 +444,17 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             
             # Handle regions field - similar to services
             if 'regions' in data:
-                regions_data = data.getlist('regions') if hasattr(data, 'getlist') else data.get('regions')
-                if regions_data:
-                    if not isinstance(regions_data, (list, tuple)):
-                        regions_data = [regions_data]
+                regions_value = data.getlist('regions') if hasattr(data, 'getlist') else data['regions']
+                
+                if isinstance(regions_value, (list, tuple)):
                     # Convert string IDs to integers
-                    try:
-                        regions_data = [int(rid) for rid in regions_data if rid]
-                        data['regions'] = regions_data
-                        logger.debug(f"Processed regions: {regions_data}")
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Error processing regions: {e}")
-                        return Response({
-                            'error': 'Invalid region IDs provided',
-                            'details': str(e)
-                        }, status=status.HTTP_400_BAD_REQUEST)
+                    processed_regions = [int(r) for r in regions_value if r]
+                    data['regions'] = processed_regions
+                elif regions_value:
+                    # Single value - convert to list of integers
+                    data['regions'] = [int(regions_value)]
+                else:
+                    data['regions'] = []
             
             # Handle availability data
             availability_data = []
