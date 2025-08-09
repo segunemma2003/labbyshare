@@ -382,32 +382,136 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             return AdminProfessionalUpdateSerializer
         return AdminProfessionalDetailSerializer
     
-    def update(self, request, *args, **kwargs):
-        import logging
-        import traceback
+    def update(self, instance, validated_data):
+        # Handle user fields using the data stored in to_internal_value
+        if hasattr(self, 'user_data') and self.user_data:
+            # Map serializer field names to user model field names
+            field_mapping = {
+                'first_name': 'first_name',
+                'last_name': 'last_name',
+                'email': 'email', 
+                'phone_number': 'phone_number',
+                'user_is_active': 'is_active',
+                'date_of_birth': 'date_of_birth',
+                'gender': 'gender',
+                'profile_picture': 'profile_picture'
+            }
+            
+            for serializer_field, user_field in field_mapping.items():
+                if serializer_field in self.user_data and self.user_data[serializer_field] is not None:
+                    setattr(instance.user, user_field, self.user_data[serializer_field])
+            instance.user.save()
         
-        try:
+        # Extract other fields
+        regions = validated_data.pop('regions', None)
+        services = validated_data.pop('services', None)
+        availability_data = validated_data.pop('availability', None)
+        
+        # Update professional fields (excluding user fields)
+        for field, value in validated_data.items():
+            if value is not None:  # Only update if value is not None
+                setattr(instance, field, value)
+        instance.save()
+        
+        # Handle regions and services updates
+        if regions is not None:
+            instance.regions.set(regions)
+            
+            # Update ProfessionalService entries if services are also provided
+            if services is not None:
+                # Clear existing ProfessionalService entries
+                instance.professionalservice_set.all().delete()
+                
+                # Create new ProfessionalService entries for each region-service combination
+                for region in regions:
+                    for service in services:
+                        ProfessionalService.objects.create(
+                            professional=instance,
+                            service=service,
+                            region=region
+                        )
+        
+        # Handle availability updates with better error handling
+        if availability_data is not None:
+            import logging
             logger = logging.getLogger(__name__)
-            logger.debug(f"Updating professional {kwargs.get('pk')} with data: {request.data}")
             
-            response = super().update(request, *args, **kwargs)
-            logger.debug(f"Professional update successful: {response.data}")
-            return response
+            # Clear existing availability for this professional
+            instance.availability_schedule.all().delete()
             
-        except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
-            logger.error(f"Request data: {request.data}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            
-            return Response(
-                {
-                    'error': 'Failed to update professional. Please check the logs for details.',
-                    'details': str(e),
-                    'type': type(e).__name__
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            # Create new availability entries
+            for i, availability_item in enumerate(availability_data):
+                try:
+                    logger.debug(f"Processing availability item {i}: {availability_item}")
+                    
+                    # Validate required fields exist
+                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                    missing_fields = []
+                    
+                    for field in required_fields:
+                        if field not in availability_item or availability_item[field] is None:
+                            missing_fields.append(field)
+                    
+                    if missing_fields:
+                        logger.warning(f"Availability item {i} missing required fields: {missing_fields}")
+                        logger.warning(f"Item data: {availability_item}")
+                        continue  # Skip this item
+                    
+                    # Validate region exists
+                    region_id = availability_item['region_id']
+                    try:
+                        from regions.models import Region
+                        region = Region.objects.get(id=region_id)
+                    except Region.DoesNotExist:
+                        logger.warning(f"Region {region_id} does not exist for availability item {i}")
+                        continue
+                    
+                    # Validate time fields are not empty strings
+                    start_time = availability_item['start_time']
+                    end_time = availability_item['end_time']
+                    
+                    if not start_time or not end_time:
+                        logger.warning(f"Empty time values in availability item {i}: start_time='{start_time}', end_time='{end_time}'")
+                        continue
+                    
+                    # Create the availability entry
+                    from professionals.models import ProfessionalAvailability
+                    availability_entry = ProfessionalAvailability.objects.create(
+                        professional=instance,
+                        region=region,
+                        weekday=availability_item['weekday'],
+                        start_time=start_time,
+                        end_time=end_time,
+                        break_start=availability_item.get('break_start') or None,
+                        break_end=availability_item.get('break_end') or None,
+                        is_active=availability_item.get('is_active', True)
+                    )
+                    
+                    logger.debug(f"Successfully created availability {availability_entry.id} for region {region_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating availability item {i}: {str(e)}")
+                    logger.error(f"Availability item data: {availability_item}")
+                    logger.error(f"Exception type: {type(e).__name__}")
+                    
+                    # Create a more specific error response
+                    error_detail = f"Failed to process availability item {i + 1}"
+                    if 'end_time' in str(e):
+                        error_detail += ": Missing or invalid end_time"
+                    elif 'start_time' in str(e):
+                        error_detail += ": Missing or invalid start_time"
+                    elif 'region_id' in str(e):
+                        error_detail += ": Missing or invalid region_id"
+                    else:
+                        error_detail += f": {str(e)}"
+                    
+                    # Instead of continuing, raise a validation error that the frontend can understand
+                    from rest_framework import serializers
+                    raise serializers.ValidationError({
+                        'availability': [error_detail]
+                    })
+        
+    return instance
 
 
 # ===================== CATEGORY MANAGEMENT =====================
