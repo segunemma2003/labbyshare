@@ -458,6 +458,16 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
         if 'profile_picture' in data:
             logger.debug(f"profile_picture type: {type(data['profile_picture'])}, value: {data['profile_picture']}")
         
+        # Handle profile_picture if it's a list
+        if hasattr(data, 'get') and data.get('profile_picture') and isinstance(data['profile_picture'], list):
+            logger.debug(f"profile_picture is a list, taking first item")
+            if len(data['profile_picture']) > 0:
+                data = data.copy()
+                data['profile_picture'] = data['profile_picture'][0]
+            else:
+                data = data.copy()
+                data['profile_picture'] = None
+        
         return super().to_internal_value(data)
     
     def run_validation(self, attrs):

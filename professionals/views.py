@@ -730,3 +730,66 @@ def test_file_upload(request):
         'files_keys': list(request.FILES.keys()) if hasattr(request, 'FILES') else [],
         'content_type': request.content_type
     })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def simple_file_test(request):
+    """Simple test to isolate file upload issues"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.debug("=== SIMPLE FILE TEST ===")
+    logger.debug(f"Request method: {request.method}")
+    logger.debug(f"Request content type: {request.content_type}")
+    logger.debug(f"Request data type: {type(request.data)}")
+    
+    # Check request.data
+    if hasattr(request.data, 'keys'):
+        logger.debug(f"Request data keys: {list(request.data.keys())}")
+        for key, value in request.data.items():
+            logger.debug(f"  {key}: type={type(value)}, value={value}")
+    
+    # Check request.FILES
+    if hasattr(request, 'FILES') and request.FILES:
+        logger.debug(f"Request FILES keys: {list(request.FILES.keys())}")
+        for key, value in request.FILES.items():
+            logger.debug(f"  File {key}: type={type(value)}")
+            if hasattr(value, 'name'):
+                logger.debug(f"    name: {value.name}")
+            if hasattr(value, 'size'):
+                logger.debug(f"    size: {value.size}")
+            if hasattr(value, 'content_type'):
+                logger.debug(f"    content_type: {value.content_type}")
+    else:
+        logger.debug("No FILES in request")
+    
+    # Try to access profile_picture specifically
+    if 'profile_picture' in request.data:
+        profile_pic = request.data['profile_picture']
+        logger.debug(f"profile_picture in data: type={type(profile_pic)}")
+        try:
+            if hasattr(profile_pic, 'name'):
+                logger.debug(f"  name: {profile_pic.name}")
+            else:
+                logger.debug(f"  No name attribute")
+        except Exception as e:
+            logger.error(f"Error accessing profile_picture.name: {e}")
+    
+    if hasattr(request, 'FILES') and 'profile_picture' in request.FILES:
+        profile_pic = request.FILES['profile_picture']
+        logger.debug(f"profile_picture in FILES: type={type(profile_pic)}")
+        try:
+            if hasattr(profile_pic, 'name'):
+                logger.debug(f"  name: {profile_pic.name}")
+            else:
+                logger.debug(f"  No name attribute")
+        except Exception as e:
+            logger.error(f"Error accessing profile_picture.name: {e}")
+    
+    return Response({
+        'message': 'Simple file test completed',
+        'data_keys': list(request.data.keys()) if hasattr(request.data, 'keys') else [],
+        'files_keys': list(request.FILES.keys()) if hasattr(request, 'FILES') else [],
+        'content_type': request.content_type
+    })
