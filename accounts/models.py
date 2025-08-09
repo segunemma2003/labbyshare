@@ -5,6 +5,36 @@ from django.utils import timezone
 import uuid
 
 
+def validate_image_file_extension(value):
+    """Validate that uploaded file is an image"""
+    import os
+    from django.core.exceptions import ValidationError
+    
+    # If value is None or empty, just return (allow null/empty values)
+    if not value:
+        return
+    
+    ext = os.path.splitext(value.name)[1]  # Get the file extension
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+    
+    if not ext.lower() in valid_extensions:
+        raise ValidationError('Unsupported file extension. Please upload an image file (JPG, PNG, GIF, BMP, WebP, TIFF, SVG).')
+
+
+def validate_file_size(value):
+    """Validate that uploaded file size is not too large"""
+    from django.core.exceptions import ValidationError
+    
+    # If value is None or empty, just return (allow null/empty values)
+    if not value:
+        return
+    
+    # 5MB limit
+    filesize = value.size
+    if filesize > 5 * 1024 * 1024:  # 5MB in bytes
+        raise ValidationError("The maximum file size that can be uploaded is 5MB.")
+
+
 class User(AbstractUser):
     """
     Optimized User model with proper indexing for millions of users
@@ -47,7 +77,13 @@ class User(AbstractUser):
     )
     
     # Profile information
-    profile_picture = models.ImageField(upload_to='profile_pics/', blank=True, null=True)
+    profile_picture = models.ImageField(
+        upload_to='profile_pics/',
+        blank=True, 
+        null=True,
+        validators=[validate_image_file_extension, validate_file_size],
+        help_text="Upload an image file (JPG, PNG, GIF, BMP, WebP, TIFF, SVG). Maximum size: 5MB."
+    )
     date_of_birth = models.DateField(blank=True, null=True)
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, blank=True)
     

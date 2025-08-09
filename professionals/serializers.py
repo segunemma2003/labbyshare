@@ -449,6 +449,29 @@ class ProfessionalUpdateSerializer(serializers.ModelSerializer):
             'is_verified', 'is_active'
         ]
     
+    def validate_profile_picture(self, value):
+        """Validate profile picture file"""
+        # If value is None or empty, just return it (allow null/empty values)
+        if not value:
+            return value
+            
+        # Check file size (5MB limit)
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Image file too large. Maximum size is 5MB.")
+        
+        # Check file type - support all common image formats
+        allowed_types = [
+            'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 
+            'image/bmp', 'image/webp', 'image/tiff', 'image/svg+xml'
+        ]
+        if hasattr(value, 'content_type') and value.content_type not in allowed_types:
+            raise serializers.ValidationError(
+                "Unsupported image format. Please upload an image file in one of these formats: "
+                "JPG, PNG, GIF, BMP, WebP, TIFF, or SVG."
+            )
+    
+        return value
+    
     def update(self, instance, validated_data):
         # Handle user fields
         user_data = {}
