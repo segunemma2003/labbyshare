@@ -456,7 +456,6 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         return {'id': instance.id}
 
 
-
 class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     """
     Update professional by admin - FIXED version with comprehensive file handling
@@ -531,20 +530,55 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 data['profile_picture'] = None
                 logger.debug("None profile picture, keeping as None")
         
-        # Handle regions - convert single values to list
+        # CRITICAL FIX: Handle regions properly for PrimaryKeyRelatedField with many=True
         if 'regions' in data:
-            regions_value = data['regions']
-            if not isinstance(regions_value, (list, tuple)):
-                data['regions'] = [regions_value] if regions_value else []
-                logger.debug(f"Converted single region to list: {data['regions']}")
+            regions_value = data.getlist('regions') if hasattr(data, 'getlist') else data['regions']
+            logger.debug(f"Raw regions value: {regions_value}, type: {type(regions_value)}")
+            
+            if isinstance(regions_value, (list, tuple)):
+                # Convert string IDs to integers
+                try:
+                    processed_regions = [int(r) for r in regions_value if r]
+                    data['regions'] = processed_regions
+                    logger.debug(f"Processed regions: {processed_regions}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting regions to integers: {e}")
+                    data['regions'] = []
+            elif regions_value:
+                # Single value - convert to list of integers
+                try:
+                    data['regions'] = [int(regions_value)]
+                    logger.debug(f"Converted single region to list: {data['regions']}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting single region to integer: {e}")
+                    data['regions'] = []
+            else:
+                data['regions'] = []
         
-        # Handle services - they can come as multiple fields with same name
+        # CRITICAL FIX: Handle services properly for PrimaryKeyRelatedField with many=True
         if 'services' in data:
             services_value = data.getlist('services') if hasattr(data, 'getlist') else data['services']
-            if not isinstance(services_value, (list, tuple)):
-                services_value = [services_value] if services_value else []
-            data['services'] = services_value
-            logger.debug(f"Services list: {data['services']}")
+            logger.debug(f"Raw services value: {services_value}, type: {type(services_value)}")
+            
+            if isinstance(services_value, (list, tuple)):
+                # Convert string IDs to integers
+                try:
+                    processed_services = [int(s) for s in services_value if s]
+                    data['services'] = processed_services
+                    logger.debug(f"Processed services: {processed_services}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting services to integers: {e}")
+                    data['services'] = []
+            elif services_value:
+                # Single value - convert to list of integers
+                try:
+                    data['services'] = [int(services_value)]
+                    logger.debug(f"Converted single service to list: {data['services']}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting single service to integer: {e}")
+                    data['services'] = []
+            else:
+                data['services'] = []
         
         # Separate user fields from professional fields BEFORE validation
         user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
