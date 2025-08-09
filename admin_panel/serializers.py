@@ -574,6 +574,11 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 data['profile_picture'] = None
                 logger.debug("None profile picture, keeping as None")
         
+        # CRITICAL: Remove user_type from data to prevent it from being changed
+        if 'user_type' in data:
+            logger.warning(f"user_type found in data: {data['user_type']}, removing to preserve 'professional'")
+            data.pop('user_type')
+        
         # CRITICAL FIX: Handle regions properly for CharField format
         if 'regions' in data:
             regions_value = data.getlist('regions') if hasattr(data, 'getlist') else data['regions']
@@ -655,6 +660,21 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             data['availability'] = availability_data
         
         logger.debug(f"Final data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        # Remove user fields from data before processing to avoid assignment error
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
+        internal_data = data.copy()
+        
+        # CRITICAL: Remove user_type from data to prevent it from being changed
+        if 'user_type' in internal_data:
+            logger.warning(f"user_type found in data: {internal_data['user_type']}, removing to preserve 'professional'")
+            internal_data.pop('user_type')
+        
+        # Store user data separately
+        self.user_data = {}
+        for field in user_fields:
+            if field in internal_data:
+                self.user_data[field] = internal_data.pop(field)
         
         return super().to_internal_value(data)
     
@@ -825,6 +845,16 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 if hasattr(self, 'user_data') and self.user_data:
                     logger.debug(f"Updating user data: {list(self.user_data.keys())}")
                     
+                    # CRITICAL: Ensure user_type is always preserved as 'professional'
+                    if instance.user:
+                        original_user_type = instance.user.user_type
+                        logger.debug(f"Original user_type: {original_user_type}")
+                        
+                        # Force user_type to remain 'professional' for professionals
+                        if original_user_type != 'professional':
+                            logger.warning(f"User type was {original_user_type}, forcing to 'professional'")
+                            instance.user.user_type = 'professional'
+                    
                     # Map serializer field names to user model field names
                     field_mapping = {
                         'first_name': 'first_name',
@@ -851,11 +881,18 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                                     # Don't raise validation error, just log and continue
                                     continue
                     
+                    # CRITICAL: Ensure user_type is preserved after any updates
+                    if instance.user and instance.user.user_type != 'professional':
+                        logger.warning(f"User type was changed to {instance.user.user_type}, forcing back to 'professional'")
+                        instance.user.user_type = 'professional'
+                        user_updated = True
+                    
                     # Save user data if any updates were made
                     if user_updated:
                         try:
                             instance.user.save()
                             logger.debug("User data saved successfully")
+                            logger.debug(f"Final user_type: {instance.user.user_type}")
                         except Exception as e:
                             logger.error(f"Error saving user: {str(e)}")
                             # Don't raise validation error, just log and continue
