@@ -175,54 +175,79 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         return value
     
     def validate_profile_picture(self, value):
-        """Enhanced profile picture validation with better error handling"""
+        """Enhanced profile picture validation with comprehensive list handling"""
         import logging
         logger = logging.getLogger(__name__)
         
+        logger.debug(f"Profile picture validation - received type: {type(value)}, value: {value}")
+        
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
-            return value
-        
-        logger.debug(f"Validating profile picture: type={type(value)}, value={value}")
+            logger.debug("Profile picture is None or empty, returning None")
+            return None
         
         # Handle case where value might be a list (common with multipart form data)
-        if isinstance(value, list):
-            logger.warning(f"Profile picture received as list with {len(value)} items")
+        if isinstance(value, (list, tuple)):
+            logger.warning(f"Profile picture received as {type(value).__name__} with {len(value)} items: {value}")
+            
             if len(value) == 0:
+                logger.debug("Empty list/tuple, returning None")
                 return None
             elif len(value) == 1:
                 value = value[0]
-                logger.debug(f"Extracted single file from list: {value}")
+                logger.debug(f"Extracted single file from {type(value).__name__}: {value}")
             else:
+                logger.error(f"Multiple files in list/tuple: {len(value)} items")
                 raise serializers.ValidationError(
                     "Only one profile picture can be uploaded at a time. Please select a single image file."
                 )
         
-        # Ensure value is a file-like object
-        if not hasattr(value, 'name'):
-            logger.error(f"Profile picture missing 'name' attribute: {type(value)}")
+        # Handle string values (sometimes Django sends file paths as strings)
+        if isinstance(value, str):
+            logger.warning(f"Profile picture received as string: {value}")
+            if value.strip() == "":
+                return None
+            # If it's a valid file path, we might need to handle it differently
+            # For now, let's reject string inputs and ask for proper file upload
             raise serializers.ValidationError(
-                "Invalid file object provided. Please upload a valid image file."
+                "Invalid file format received. Please upload a proper image file."
+            )
+        
+        # Ensure value is a file-like object with required attributes
+        if not hasattr(value, 'name'):
+            logger.error(f"Profile picture missing 'name' attribute. Type: {type(value)}, Dir: {dir(value)}")
+            raise serializers.ValidationError(
+                "Invalid file object - missing file name. Please select a proper image file."
             )
             
         if not hasattr(value, 'size'):
-            logger.error(f"Profile picture missing 'size' attribute: {type(value)}")
+            logger.error(f"Profile picture missing 'size' attribute. Type: {type(value)}, Attributes: {dir(value)}")
             raise serializers.ValidationError(
-                "Unable to determine file size. Please upload a valid image file."
+                "Invalid file object - cannot determine file size. Please select a proper image file."
             )
         
-        # Validate file name exists
-        if not value.name:
+        # Validate file name exists and is not empty
+        if not value.name or str(value.name).strip() == "":
+            logger.error(f"Profile picture has empty name: '{value.name}'")
             raise serializers.ValidationError(
                 "File must have a valid name. Please select a proper image file."
             )
         
-        logger.debug(f"Profile picture validation - name: {value.name}, size: {value.size}")
+        logger.debug(f"Profile picture validation - name: '{value.name}', size: {value.size} bytes")
         
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
+            logger.warning(f"Profile picture too large: {value.size} bytes")
             raise serializers.ValidationError(
-                f"Image file is too large ({value.size} bytes). Maximum file size is 5MB. Please compress your image or choose a smaller file."
+                f"Image file is too large ({value.size:,} bytes). Maximum file size is 5MB. "
+                f"Please compress your image or choose a smaller file."
+            )
+        
+        # Check for minimum file size (avoid empty files)
+        if value.size < 100:  # Less than 100 bytes is suspicious
+            logger.warning(f"Profile picture too small: {value.size} bytes")
+            raise serializers.ValidationError(
+                f"Image file is too small ({value.size} bytes). Please select a valid image file."
             )
         
         # Check file type - support all common image formats
@@ -233,7 +258,9 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         
         # Check content type if available
         if hasattr(value, 'content_type') and value.content_type:
+            logger.debug(f"Profile picture content type: {value.content_type}")
             if value.content_type not in allowed_types:
+                logger.warning(f"Unsupported content type: {value.content_type}")
                 raise serializers.ValidationError(
                     f"Unsupported image format: {value.content_type}. "
                     f"Please upload an image in one of these formats: JPEG, PNG, GIF, BMP, WebP, TIFF, or SVG."
@@ -242,16 +269,20 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         # Check file extension as fallback
         if hasattr(value, 'name') and value.name:
             import os
-            file_extension = os.path.splitext(value.name)[1].lower()
+            file_extension = os.path.splitext(str(value.name))[1].lower()
             allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            
+            logger.debug(f"Profile picture file extension: '{file_extension}'")
+            
             if file_extension not in allowed_extensions:
+                logger.warning(f"Unsupported file extension: {file_extension}")
                 raise serializers.ValidationError(
                     f"Unsupported file extension: {file_extension}. "
                     f"Please upload an image with one of these extensions: "
                     f"{', '.join(allowed_extensions)}"
                 )
         
-        # Additional validation: check if it's actually an image
+        # Additional validation: check if it's actually an image (if PIL is available)
         try:
             from PIL import Image
             import io
@@ -261,75 +292,70 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                 value.seek(0)
             
             # Try to open and verify the image
-            image = Image.open(value)
-            image.verify()
+            try:
+                image = Image.open(value)
+                image.verify()
+                logger.debug(f"PIL image verification successful for: {value.name}")
+            except Exception as pil_error:
+                logger.error(f"PIL image verification failed: {str(pil_error)}")
+                raise serializers.ValidationError(
+                    f"Invalid or corrupted image file. Please try uploading a different image. "
+                    f"Error details: {str(pil_error)}"
+                )
             
             # Reset file pointer again after verification
             if hasattr(value, 'seek'):
                 value.seek(0)
                 
-            logger.debug(f"Profile picture validation successful for: {value.name}")
-                
         except ImportError:
             # PIL not available, skip image verification
-            logger.warning("PIL not available, skipping image verification")
+            logger.debug("PIL not available, skipping advanced image verification")
             pass
         except Exception as e:
-            logger.error(f"Image validation failed for {value.name}: {str(e)}")
-            raise serializers.ValidationError(
-                f"Invalid image file. The file appears to be corrupted or is not a valid image. "
-                f"Please try uploading a different image file. Error: {str(e)}"
-            )
+            logger.error(f"Unexpected error during image validation: {str(e)}")
+            # Don't fail on unexpected PIL errors, just log them
+            pass
     
+        logger.info(f"Profile picture validation successful: {value.name} ({value.size} bytes)")
         return value
     
+    
+    # Also add this method to handle the file preprocessing in to_internal_value
     def to_internal_value(self, data):
-        """Parse form data format for availability fields"""
-        # Add debugging
+        """Override to preprocess profile picture before validation"""
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data type: {type(data)}")
-        logger.debug(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
         
-        # Parse availability data from form data format (availability[0][field])
-        availability_data = []
-        availability_keys = [key for key in data.keys() if key.startswith('availability[')]
-        
-        logger.debug(f"Found availability keys: {availability_keys}")
-        
-        if availability_keys:
-            # Group availability items by index
-            availability_items = {}
-            for key in availability_keys:
-                # Extract index and field name from key like "availability[0][end_time]"
-                import re
-                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
-                if match:
-                    index = int(match.group(1))
-                    field_name = match.group(2)
-                    
-                    if index not in availability_items:
-                        availability_items[index] = {}
-                    
-                    availability_items[index][field_name] = data[key]
-                    logger.debug(f"Parsed availability[{index}][{field_name}] = {data[key]}")
+        # Log incoming data for debugging
+        if 'profile_picture' in data:
+            pp_value = data['profile_picture']
+            logger.debug(f"Raw profile_picture in to_internal_value: type={type(pp_value)}, value={pp_value}")
             
-            # Convert to list format
-            for index in sorted(availability_items.keys()):
-                availability_data.append(availability_items[index])
-            
-            logger.debug(f"Parsed availability data: {availability_data}")
-            
-            # Remove the original availability keys and add the parsed data
-            data = data.copy()
-            for key in availability_keys:
-                data.pop(key, None)
-            
-            data['availability'] = availability_data
+            # Handle profile picture preprocessing
+            if isinstance(pp_value, (list, tuple)):
+                if len(pp_value) == 0:
+                    data['profile_picture'] = None
+                elif len(pp_value) == 1:
+                    data['profile_picture'] = pp_value[0]
+                    logger.debug(f"Preprocessed profile_picture from list: {data['profile_picture']}")
+                else:
+                    logger.error(f"Multiple profile pictures received: {len(pp_value)} items")
+                    # Let the validator handle this error
+                    pass
+            elif isinstance(pp_value, str) and pp_value.strip() == "":
+                data['profile_picture'] = None
         
-        logger.debug(f"Final data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        # Remove user fields from data before processing to avoid assignment error
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
+        internal_data = data.copy()
         
-        return super().to_internal_value(data)
+        # Store user data separately
+        self.user_data = {}
+        for field in user_fields:
+            if field in internal_data:
+                self.user_data[field] = internal_data.pop(field)
+        
+        return super().to_internal_value(internal_data)
     
     def create(self, validated_data):
         # Extract user fields
@@ -463,43 +489,79 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         ]
     
     def validate_profile_picture(self, value):
-        """Enhanced profile picture validation with better error handling"""
+        """Enhanced profile picture validation with comprehensive list handling"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"Profile picture validation - received type: {type(value)}, value: {value}")
+        
         # If value is None or empty, just return it (allow null/empty values)
         if not value:
-            return value
+            logger.debug("Profile picture is None or empty, returning None")
+            return None
         
         # Handle case where value might be a list (common with multipart form data)
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
+            logger.warning(f"Profile picture received as {type(value).__name__} with {len(value)} items: {value}")
+            
             if len(value) == 0:
+                logger.debug("Empty list/tuple, returning None")
                 return None
             elif len(value) == 1:
                 value = value[0]
+                logger.debug(f"Extracted single file from {type(value).__name__}: {value}")
             else:
+                logger.error(f"Multiple files in list/tuple: {len(value)} items")
                 raise serializers.ValidationError(
                     "Only one profile picture can be uploaded at a time. Please select a single image file."
                 )
         
-        # Ensure value is a file-like object
-        if not hasattr(value, 'name'):
+        # Handle string values (sometimes Django sends file paths as strings)
+        if isinstance(value, str):
+            logger.warning(f"Profile picture received as string: {value}")
+            if value.strip() == "":
+                return None
+            # If it's a valid file path, we might need to handle it differently
+            # For now, let's reject string inputs and ask for proper file upload
             raise serializers.ValidationError(
-                "Invalid file object provided. Please upload a valid image file."
+                "Invalid file format received. Please upload a proper image file."
+            )
+        
+        # Ensure value is a file-like object with required attributes
+        if not hasattr(value, 'name'):
+            logger.error(f"Profile picture missing 'name' attribute. Type: {type(value)}, Dir: {dir(value)}")
+            raise serializers.ValidationError(
+                "Invalid file object - missing file name. Please select a proper image file."
             )
             
         if not hasattr(value, 'size'):
+            logger.error(f"Profile picture missing 'size' attribute. Type: {type(value)}, Attributes: {dir(value)}")
             raise serializers.ValidationError(
-                "Unable to determine file size. Please upload a valid image file."
+                "Invalid file object - cannot determine file size. Please select a proper image file."
             )
         
-        # Validate file name exists
-        if not value.name:
+        # Validate file name exists and is not empty
+        if not value.name or str(value.name).strip() == "":
+            logger.error(f"Profile picture has empty name: '{value.name}'")
             raise serializers.ValidationError(
                 "File must have a valid name. Please select a proper image file."
             )
         
+        logger.debug(f"Profile picture validation - name: '{value.name}', size: {value.size} bytes")
+        
         # Check file size (5MB limit)
         if value.size > 5 * 1024 * 1024:
+            logger.warning(f"Profile picture too large: {value.size} bytes")
             raise serializers.ValidationError(
-                "Image file is too large. Maximum file size is 5MB. Please compress your image or choose a smaller file."
+                f"Image file is too large ({value.size:,} bytes). Maximum file size is 5MB. "
+                f"Please compress your image or choose a smaller file."
+            )
+        
+        # Check for minimum file size (avoid empty files)
+        if value.size < 100:  # Less than 100 bytes is suspicious
+            logger.warning(f"Profile picture too small: {value.size} bytes")
+            raise serializers.ValidationError(
+                f"Image file is too small ({value.size} bytes). Please select a valid image file."
             )
         
         # Check file type - support all common image formats
@@ -510,7 +572,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         
         # Check content type if available
         if hasattr(value, 'content_type') and value.content_type:
+            logger.debug(f"Profile picture content type: {value.content_type}")
             if value.content_type not in allowed_types:
+                logger.warning(f"Unsupported content type: {value.content_type}")
                 raise serializers.ValidationError(
                     f"Unsupported image format: {value.content_type}. "
                     f"Please upload an image in one of these formats: JPEG, PNG, GIF, BMP, WebP, TIFF, or SVG."
@@ -519,16 +583,20 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         # Check file extension as fallback
         if hasattr(value, 'name') and value.name:
             import os
-            file_extension = os.path.splitext(value.name)[1].lower()
+            file_extension = os.path.splitext(str(value.name))[1].lower()
             allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+            
+            logger.debug(f"Profile picture file extension: '{file_extension}'")
+            
             if file_extension not in allowed_extensions:
+                logger.warning(f"Unsupported file extension: {file_extension}")
                 raise serializers.ValidationError(
                     f"Unsupported file extension: {file_extension}. "
                     f"Please upload an image with one of these extensions: "
                     f"{', '.join(allowed_extensions)}"
                 )
         
-        # Additional validation: check if it's actually an image
+        # Additional validation: check if it's actually an image (if PIL is available)
         try:
             from PIL import Image
             import io
@@ -538,8 +606,16 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 value.seek(0)
             
             # Try to open and verify the image
-            image = Image.open(value)
-            image.verify()
+            try:
+                image = Image.open(value)
+                image.verify()
+                logger.debug(f"PIL image verification successful for: {value.name}")
+            except Exception as pil_error:
+                logger.error(f"PIL image verification failed: {str(pil_error)}")
+                raise serializers.ValidationError(
+                    f"Invalid or corrupted image file. Please try uploading a different image. "
+                    f"Error details: {str(pil_error)}"
+                )
             
             # Reset file pointer again after verification
             if hasattr(value, 'seek'):
@@ -547,21 +623,41 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 
         except ImportError:
             # PIL not available, skip image verification
+            logger.debug("PIL not available, skipping advanced image verification")
             pass
         except Exception as e:
-            raise serializers.ValidationError(
-                f"Invalid image file. The file appears to be corrupted or is not a valid image. "
-                f"Please try uploading a different image file."
-            )
+            logger.error(f"Unexpected error during image validation: {str(e)}")
+            # Don't fail on unexpected PIL errors, just log them
+            pass
     
+        logger.info(f"Profile picture validation successful: {value.name} ({value.size} bytes)")
         return value
     
+    
+    # Also add this method to handle the file preprocessing in to_internal_value
     def to_internal_value(self, data):
-        # Add debugging
+        """Override to preprocess profile picture before validation"""
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"to_internal_value called with data type: {type(data)}")
-        logger.debug(f"Data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        # Log incoming data for debugging
+        if 'profile_picture' in data:
+            pp_value = data['profile_picture']
+            logger.debug(f"Raw profile_picture in to_internal_value: type={type(pp_value)}, value={pp_value}")
+            
+            # Handle profile picture preprocessing
+            if isinstance(pp_value, (list, tuple)):
+                if len(pp_value) == 0:
+                    data['profile_picture'] = None
+                elif len(pp_value) == 1:
+                    data['profile_picture'] = pp_value[0]
+                    logger.debug(f"Preprocessed profile_picture from list: {data['profile_picture']}")
+                else:
+                    logger.error(f"Multiple profile pictures received: {len(pp_value)} items")
+                    # Let the validator handle this error
+                    pass
+            elif isinstance(pp_value, str) and pp_value.strip() == "":
+                data['profile_picture'] = None
         
         # Remove user fields from data before processing to avoid assignment error
         user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
@@ -573,175 +669,181 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             if field in internal_data:
                 self.user_data[field] = internal_data.pop(field)
         
-        # Parse availability data from form data format (availability[0][field])
-        availability_data = []
-        availability_keys = [key for key in internal_data.keys() if key.startswith('availability[')]
-        
-        logger.debug(f"Found availability keys: {availability_keys}")
-        
-        if availability_keys:
-            # Group availability items by index
-            availability_items = {}
-            for key in availability_keys:
-                # Extract index and field name from key like "availability[0][end_time]"
-                import re
-                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
-                if match:
-                    index = int(match.group(1))
-                    field_name = match.group(2)
-                    
-                    if index not in availability_items:
-                        availability_items[index] = {}
-                    
-                    availability_items[index][field_name] = internal_data[key]
-                    logger.debug(f"Parsed availability[{index}][{field_name}] = {internal_data[key]}")
-            
-            # Convert to list format
-            for index in sorted(availability_items.keys()):
-                availability_data.append(availability_items[index])
-            
-            logger.debug(f"Parsed availability data: {availability_data}")
-            
-            # Remove the original availability keys and add the parsed data
-            for key in availability_keys:
-                internal_data.pop(key, None)
-            
-            internal_data['availability'] = availability_data
-        
-        logger.debug(f"Final internal_data keys: {list(internal_data.keys()) if hasattr(internal_data, 'keys') else 'No keys'}")
-        
         return super().to_internal_value(internal_data)
     
+    
+    # Updated update method with better error handling
     def update(self, instance, validated_data):
-        # Handle user fields using the data stored in to_internal_value
-        if hasattr(self, 'user_data') and self.user_data:
-            # Map serializer field names to user model field names
-            field_mapping = {
-                'first_name': 'first_name',
-                'last_name': 'last_name',
-                'email': 'email', 
-                'phone_number': 'phone_number',
-                'user_is_active': 'is_active',
-                'date_of_birth': 'date_of_birth',
-                'gender': 'gender',
-                'profile_picture': 'profile_picture'
-            }
-            
-            for serializer_field, user_field in field_mapping.items():
-                if serializer_field in self.user_data and self.user_data[serializer_field] is not None:
-                    setattr(instance.user, user_field, self.user_data[serializer_field])
-            instance.user.save()
+        """Enhanced update method with comprehensive error handling"""
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
         
-        # Extract other fields
-        regions = validated_data.pop('regions', None)
-        services = validated_data.pop('services', None)
-        availability_data = validated_data.pop('availability', None)
-        
-        # Update professional fields (excluding user fields)
-        for field, value in validated_data.items():
-            if value is not None:  # Only update if value is not None
-                setattr(instance, field, value)
-        instance.save()
-        
-        # Handle regions and services updates
-        if regions is not None:
-            instance.regions.set(regions)
-            
-            # Update ProfessionalService entries if services are also provided
-            if services is not None:
-                # Clear existing ProfessionalService entries
-                instance.professionalservice_set.all().delete()
+        try:
+            # Handle user fields using the data stored in to_internal_value
+            if hasattr(self, 'user_data') and self.user_data:
+                logger.debug(f"Updating user data: {self.user_data}")
                 
-                # Create new ProfessionalService entries for each region-service combination
-                for region in regions:
-                    for service in services:
-                        ProfessionalService.objects.create(
-                            professional=instance,
-                            service=service,
-                            region=region
-                        )
-        
-        # Handle availability updates with better error handling
-        if availability_data is not None:
-            import logging
-            logger = logging.getLogger(__name__)
-            
-            # Clear existing availability for this professional
-            instance.availability_schedule.all().delete()
-            
-            # Create new availability entries
-            for i, availability_item in enumerate(availability_data):
+                # Map serializer field names to user model field names
+                field_mapping = {
+                    'first_name': 'first_name',
+                    'last_name': 'last_name',
+                    'email': 'email', 
+                    'phone_number': 'phone_number',
+                    'user_is_active': 'is_active',
+                    'date_of_birth': 'date_of_birth',
+                    'gender': 'gender',
+                    'profile_picture': 'profile_picture'
+                }
+                
+                for serializer_field, user_field in field_mapping.items():
+                    if serializer_field in self.user_data and self.user_data[serializer_field] is not None:
+                        try:
+                            setattr(instance.user, user_field, self.user_data[serializer_field])
+                            logger.debug(f"Set user.{user_field} = {self.user_data[serializer_field]}")
+                        except Exception as e:
+                            logger.error(f"Error setting user.{user_field}: {str(e)}")
+                            raise serializers.ValidationError({user_field: f"Failed to update {user_field}: {str(e)}"})
+                
                 try:
-                    logger.debug(f"Processing availability item {i}: {availability_item}")
-                    
-                    # Validate required fields exist
-                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
-                    missing_fields = []
-                    
-                    for field in required_fields:
-                        if field not in availability_item or availability_item[field] is None:
-                            missing_fields.append(field)
-                    
-                    if missing_fields:
-                        logger.warning(f"Availability item {i} missing required fields: {missing_fields}")
-                        logger.warning(f"Item data: {availability_item}")
-                        continue  # Skip this item
-                    
-                    # Validate region exists
-                    region_id = availability_item['region_id']
-                    try:
-                        from regions.models import Region
-                        region = Region.objects.get(id=region_id)
-                    except Region.DoesNotExist:
-                        logger.warning(f"Region {region_id} does not exist for availability item {i}")
-                        continue
-                    
-                    # Validate time fields are not empty strings
-                    start_time = availability_item['start_time']
-                    end_time = availability_item['end_time']
-                    
-                    if not start_time or not end_time:
-                        logger.warning(f"Empty time values in availability item {i}: start_time='{start_time}', end_time='{end_time}'")
-                        continue
-                    
-                    # Create the availability entry
-                    from professionals.models import ProfessionalAvailability
-                    availability_entry = ProfessionalAvailability.objects.create(
-                        professional=instance,
-                        region=region,
-                        weekday=availability_item['weekday'],
-                        start_time=start_time,
-                        end_time=end_time,
-                        break_start=availability_item.get('break_start') or None,
-                        break_end=availability_item.get('break_end') or None,
-                        is_active=availability_item.get('is_active', True)
-                    )
-                    
-                    logger.debug(f"Successfully created availability {availability_entry.id} for region {region_id}")
-                    
+                    instance.user.save()
+                    logger.debug("User data saved successfully")
                 except Exception as e:
-                    logger.error(f"Error creating availability item {i}: {str(e)}")
-                    logger.error(f"Availability item data: {availability_item}")
-                    logger.error(f"Exception type: {type(e).__name__}")
+                    logger.error(f"Error saving user: {str(e)}")
+                    raise serializers.ValidationError({"user": f"Failed to save user data: {str(e)}"})
+            
+            # Extract other fields
+            regions = validated_data.pop('regions', None)
+            services = validated_data.pop('services', None)
+            availability_data = validated_data.pop('availability', None)
+            
+            # Update professional fields (excluding user fields)
+            for field, value in validated_data.items():
+                if value is not None:  # Only update if value is not None
+                    try:
+                        setattr(instance, field, value)
+                        logger.debug(f"Set professional.{field} = {value}")
+                    except Exception as e:
+                        logger.error(f"Error setting professional.{field}: {str(e)}")
+                        raise serializers.ValidationError({field: f"Failed to update {field}: {str(e)}"})
+            
+            try:
+                instance.save()
+                logger.debug("Professional data saved successfully")
+            except Exception as e:
+                logger.error(f"Error saving professional: {str(e)}")
+                raise serializers.ValidationError({"professional": f"Failed to save professional data: {str(e)}"})
+            
+            # Handle regions and services updates
+            if regions is not None:
+                try:
+                    instance.regions.set(regions)
+                    logger.debug(f"Set regions: {regions}")
                     
-                    # Create a more specific error response
-                    error_detail = f"Failed to process availability item {i + 1}"
-                    if 'end_time' in str(e):
-                        error_detail += ": Missing or invalid end_time"
-                    elif 'start_time' in str(e):
-                        error_detail += ": Missing or invalid start_time"
-                    elif 'region_id' in str(e):
-                        error_detail += ": Missing or invalid region_id"
-                    else:
-                        error_detail += f": {str(e)}"
+                    # Update ProfessionalService entries if services are also provided
+                    if services is not None:
+                        # Clear existing ProfessionalService entries
+                        instance.professionalservice_set.all().delete()
+                        
+                        # Create new ProfessionalService entries for each region-service combination
+                        for region in regions:
+                            for service in services:
+                                ProfessionalService.objects.create(
+                                    professional=instance,
+                                    service=service,
+                                    region=region
+                                )
+                        logger.debug(f"Created ProfessionalService entries for {len(regions)} regions and {len(services)} services")
+                except Exception as e:
+                    logger.error(f"Error updating regions/services: {str(e)}")
+                    raise serializers.ValidationError({"regions_services": f"Failed to update regions and services: {str(e)}"})
+            
+            # Handle availability updates with comprehensive error handling
+            if availability_data is not None:
+                try:
+                    # Clear existing availability for this professional
+                    instance.availability_schedule.all().delete()
+                    logger.debug("Cleared existing availability")
                     
-                    # Instead of continuing, raise a validation error that the frontend can understand
-                    from rest_framework import serializers
-                    raise serializers.ValidationError({
-                        'availability': [error_detail]
-                    })
-        
-        return instance
+                    # Create new availability entries
+                    for i, availability_item in enumerate(availability_data):
+                        try:
+                            logger.debug(f"Processing availability item {i}: {availability_item}")
+                            
+                            # Validate required fields exist
+                            required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                            missing_fields = []
+                            
+                            for field in required_fields:
+                                if field not in availability_item or availability_item[field] is None:
+                                    missing_fields.append(field)
+                            
+                            if missing_fields:
+                                error_msg = f"Availability item {i + 1} missing required fields: {missing_fields}"
+                                logger.error(error_msg)
+                                raise serializers.ValidationError({"availability": [error_msg]})
+                            
+                            # Validate region exists
+                            region_id = availability_item['region_id']
+                            try:
+                                from regions.models import Region
+                                region = Region.objects.get(id=region_id)
+                            except Region.DoesNotExist:
+                                error_msg = f"Region {region_id} does not exist for availability item {i + 1}"
+                                logger.error(error_msg)
+                                raise serializers.ValidationError({"availability": [error_msg]})
+                            
+                            # Validate time fields are not empty strings
+                            start_time = availability_item['start_time']
+                            end_time = availability_item['end_time']
+                            
+                            if not start_time or not end_time:
+                                error_msg = f"Empty time values in availability item {i + 1}: start_time='{start_time}', end_time='{end_time}'"
+                                logger.error(error_msg)
+                                raise serializers.ValidationError({"availability": [error_msg]})
+                            
+                            # Create the availability entry
+                            from professionals.models import ProfessionalAvailability
+                            availability_entry = ProfessionalAvailability.objects.create(
+                                professional=instance,
+                                region=region,
+                                weekday=availability_item['weekday'],
+                                start_time=start_time,
+                                end_time=end_time,
+                                break_start=availability_item.get('break_start') or None,
+                                break_end=availability_item.get('break_end') or None,
+                                is_active=availability_item.get('is_active', True)
+                            )
+                            
+                            logger.debug(f"Successfully created availability {availability_entry.id} for region {region_id}")
+                            
+                        except serializers.ValidationError:
+                            # Re-raise validation errors as-is
+                            raise
+                        except Exception as e:
+                            error_msg = f"Failed to process availability item {i + 1}: {str(e)}"
+                            logger.error(f"{error_msg}\nItem data: {availability_item}\nTraceback: {traceback.format_exc()}")
+                            raise serializers.ValidationError({"availability": [error_msg]})
+                            
+                    logger.debug(f"Successfully processed {len(availability_data)} availability items")
+                    
+                except serializers.ValidationError:
+                    # Re-raise validation errors as-is
+                    raise
+                except Exception as e:
+                    error_msg = f"Failed to update availability: {str(e)}"
+                    logger.error(f"{error_msg}\nTraceback: {traceback.format_exc()}")
+                    raise serializers.ValidationError({"availability": [error_msg]})
+            
+            logger.info(f"Successfully updated professional {instance.id}")
+            return instance
+            
+        except serializers.ValidationError:
+            # Re-raise validation errors as-is
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in professional update: {str(e)}\nTraceback: {traceback.format_exc()}")
+            raise serializers.ValidationError({"non_field_errors": [f"Unexpected error: {str(e)}"]})
 
 
 # ===================== CATEGORY MANAGEMENT SERIALIZERS =====================
