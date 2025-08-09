@@ -345,17 +345,45 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             elif isinstance(pp_value, str) and pp_value.strip() == "":
                 data['profile_picture'] = None
         
-        # Remove user fields from data before processing to avoid assignment error
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
-        internal_data = data.copy()
+        # Parse availability data from form data format (availability[0][field])
+        availability_data = []
+        availability_keys = [key for key in data.keys() if key.startswith('availability[')]
         
-        # Store user data separately
-        self.user_data = {}
-        for field in user_fields:
-            if field in internal_data:
-                self.user_data[field] = internal_data.pop(field)
+        logger.debug(f"Found availability keys: {availability_keys}")
         
-        return super().to_internal_value(internal_data)
+        if availability_keys:
+            # Group availability items by index
+            availability_items = {}
+            for key in availability_keys:
+                # Extract index and field name from key like "availability[0][end_time]"
+                import re
+                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
+                if match:
+                    index = int(match.group(1))
+                    field_name = match.group(2)
+                    
+                    if index not in availability_items:
+                        availability_items[index] = {}
+                    
+                    availability_items[index][field_name] = data[key]
+                    logger.debug(f"Parsed availability[{index}][{field_name}] = {data[key]}")
+            
+            # Convert to list format
+            for index in sorted(availability_items.keys()):
+                availability_data.append(availability_items[index])
+            
+            logger.debug(f"Parsed availability data: {availability_data}")
+            
+            # Remove the original availability keys and add the parsed data
+            data = data.copy()
+            for key in availability_keys:
+                data.pop(key, None)
+            
+            data['availability'] = availability_data
+        
+        logger.debug(f"Final data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        return super().to_internal_value(data)
     
     def create(self, validated_data):
         # Extract user fields
@@ -498,6 +526,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         Override to handle multipart form data and fix profile picture issues
         """
         import logging
+        import re
         logger = logging.getLogger(__name__)
         
         # Create a mutable copy of the data
@@ -580,21 +609,43 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             else:
                 data['services'] = []
         
-        # Separate user fields from professional fields BEFORE validation
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active', 'date_of_birth', 'gender', 'profile_picture']
+        # Parse availability data from form data format (availability[0][field])
+        availability_data = []
+        availability_keys = [key for key in data.keys() if key.startswith('availability[')]
         
-        # Store user data separately
-        for field in user_fields:
-            if field in data:
-                self.user_data[field] = data[field]
+        logger.debug(f"Found availability keys: {availability_keys}")
         
-        # Create a clean data dict for the serializer (without user fields)
-        clean_data = data.copy()
-        for field in user_fields:
-            if field in clean_data:
-                del clean_data[field]
+        if availability_keys:
+            # Group availability items by index
+            availability_items = {}
+            for key in availability_keys:
+                # Extract index and field name from key like "availability[0][end_time]"
+                match = re.match(r'availability\[(\d+)\]\[([^\]]+)\]', key)
+                if match:
+                    index = int(match.group(1))
+                    field_name = match.group(2)
+                    
+                    if index not in availability_items:
+                        availability_items[index] = {}
+                    
+                    availability_items[index][field_name] = data[key]
+                    logger.debug(f"Parsed availability[{index}][{field_name}] = {data[key]}")
+            
+            # Convert to list format
+            for index in sorted(availability_items.keys()):
+                availability_data.append(availability_items[index])
+            
+            logger.debug(f"Parsed availability data: {availability_data}")
+            
+            # Remove the original availability keys and add the parsed data
+            for key in availability_keys:
+                data.pop(key, None)
+            
+            data['availability'] = availability_data
         
-        return super().to_internal_value(clean_data)
+        logger.debug(f"Final data keys: {list(data.keys()) if hasattr(data, 'keys') else 'No keys'}")
+        
+        return super().to_internal_value(data)
     
     def validate_profile_picture(self, value):
         """
