@@ -137,6 +137,9 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, validators=[validate_password])
     phone_number = serializers.CharField(required=False)
+    date_of_birth = serializers.DateField(required=False)
+    gender = serializers.CharField(required=False)
+    profile_picture = serializers.ImageField(required=False)
     
     # Professional fields
     regions = serializers.PrimaryKeyRelatedField(
@@ -155,6 +158,7 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         model = Professional
         fields = [
             'first_name', 'last_name', 'email', 'password', 'phone_number',
+            'date_of_birth', 'gender', 'profile_picture',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
             'regions', 'services', 'availability'
@@ -172,12 +176,19 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             'last_name': validated_data.pop('last_name'),
             'email': validated_data.pop('email'),
             'phone_number': validated_data.pop('phone_number', ''),
+            'date_of_birth': validated_data.pop('date_of_birth', None),
+            'gender': validated_data.pop('gender', ''),
+            'profile_picture': validated_data.pop('profile_picture', None),
             'user_type': 'professional'
         }
         password = validated_data.pop('password')
         regions = validated_data.pop('regions')
         services = validated_data.pop('services')
         availability_data = validated_data.pop('availability', [])
+        
+        # Set default values for admin-created professionals
+        validated_data.setdefault('is_verified', True)
+        validated_data.setdefault('is_active', True)
         
         # Create user
         user = User.objects.create_user(
@@ -240,9 +251,16 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source='user.last_name')
     email = serializers.EmailField(source='user.email')
     phone_number = serializers.CharField(source='user.phone_number', required=False)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
+    gender = serializers.CharField(source='user.gender', required=False)
+    profile_picture = serializers.ImageField(source='user.profile_picture', required=False)
     user_is_active = serializers.BooleanField(source='user.is_active')
     regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
     services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
+    
+    # Professional status fields
+    is_verified = serializers.BooleanField(required=False)
+    is_active = serializers.BooleanField(required=False)
     
     # Availability data
     availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
@@ -250,10 +268,10 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
-            'bio', 'experience_years', 'is_verified', 'is_active',
-            'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
-            'regions', 'services', 'availability'
+            'first_name', 'last_name', 'email', 'phone_number', 'date_of_birth', 'gender', 'profile_picture',
+            'user_is_active', 'bio', 'experience_years', 'is_verified', 'is_active',
+            'travel_radius_km', 'min_booking_notice_hours', 'cancellation_policy',
+            'commission_rate', 'regions', 'services', 'availability'
         ]
     
     def to_internal_value(self, data):
@@ -812,6 +830,10 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     phone_number = serializers.CharField(source='user.phone_number', read_only=True)
     user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     date_joined = serializers.DateTimeField(source='user.date_joined', read_only=True)
+    last_login = serializers.DateTimeField(source='user.last_login', read_only=True)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', read_only=True)
+    gender = serializers.CharField(source='user.gender', read_only=True)
+    profile_picture = serializers.ImageField(source='user.profile_picture', read_only=True)
     
     # Professional stats
     total_bookings = serializers.SerializerMethodField()
@@ -819,20 +841,37 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     regions_served = serializers.SerializerMethodField()
     services_offered = serializers.SerializerMethodField()
     availability_by_region = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
+    verification_documents = serializers.SerializerMethodField()
+    profile_completion_status = serializers.SerializerMethodField()
     
     class Meta:
         model = Professional
         fields = [
-            'id', 'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
-            'date_joined', 'bio', 'experience_years', 'rating', 'total_reviews',
-            'is_verified', 'is_active', 'travel_radius_km', 'min_booking_notice_hours',
-            'commission_rate', 'total_bookings', 'total_earnings', 'regions_served',
-            'services_offered', 'availability_by_region', 'verified_at', 'created_at'
+            # Basic info
+            'id', 'first_name', 'last_name', 'email', 'phone_number', 
+            'user_is_active', 'date_joined', 'last_login', 'date_of_birth', 'gender',
+            'profile_picture',
+            
+            # Professional details
+            'bio', 'experience_years', 'rating', 'total_reviews',
+            'is_verified', 'is_active', 'travel_radius_km', 
+            'min_booking_notice_hours', 'cancellation_policy',
+            'commission_rate', 'profile_completed', 'verified_at',
+            
+            # Stats and relationships
+            'total_bookings', 'total_earnings', 'regions_served',
+            'services_offered', 'availability_by_region', 'documents',
+            'verification_documents', 'profile_completion_status',
+            
+            # Timestamps
+            'created_at', 'updated_at'
         ]
     
     def get_total_bookings(self, obj):
         try:
-            return obj.bookings.count()
+            from bookings.models import Booking
+            return Booking.objects.filter(professional=obj).count()
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
@@ -842,7 +881,10 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     def get_total_earnings(self, obj):
         try:
             from bookings.models import Booking
-            completed_bookings = obj.bookings.filter(status='completed')
+            completed_bookings = Booking.objects.filter(
+                professional=obj, 
+                status='completed'
+            )
             return float(sum(booking.total_amount for booking in completed_bookings))
         except Exception as e:
             import logging
@@ -852,7 +894,12 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     
     def get_regions_served(self, obj):
         try:
-            return [{'id': r.id, 'name': r.name, 'code': r.code} for r in obj.regions.all()]
+            return [{
+                'id': r.id, 
+                'name': r.name, 
+                'code': r.code,
+                'is_primary': obj.professionalregion_set.filter(region=r).first().is_primary if obj.professionalregion_set.filter(region=r).exists() else False
+            } for r in obj.regions.all()]
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
@@ -861,8 +908,21 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     
     def get_services_offered(self, obj):
         try:
-            services = obj.services.all()
-            return [{'id': s.id, 'name': s.name, 'category': s.category.name} for s in services]
+            services_data = []
+            for ps in obj.professionalservice_set.select_related('service', 'service__category').all():
+                services_data.append({
+                    'id': ps.service.id,
+                    'name': ps.service.name,
+                    'category': ps.service.category.name,
+                    'region_id': ps.region.id,
+                    'region_name': ps.region.name,
+                    'custom_price': float(ps.custom_price) if ps.custom_price else None,
+                    'effective_price': float(ps.get_price()),
+                    'is_active': ps.is_active,
+                    'preparation_time_minutes': ps.preparation_time_minutes,
+                    'cleanup_time_minutes': ps.cleanup_time_minutes
+                })
+            return services_data
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
@@ -887,6 +947,7 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
                         }
                     
                     availability_data[region_id]['schedule'].append({
+                        'id': availability.id,
                         'weekday': availability.weekday,
                         'weekday_name': availability.get_weekday_display(),
                         'start_time': availability.start_time.strftime('%H:%M') if availability.start_time else None,
@@ -909,6 +970,78 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
             logger = logging.getLogger(__name__)
             logger.error(f"Error in get_availability_by_region for professional {obj.id}: {str(e)}")
             return []
+    
+    def get_documents(self, obj):
+        """Get all professional documents"""
+        try:
+            return [{
+                'id': doc.id,
+                'document_type': doc.document_type,
+                'document_type_display': doc.get_document_type_display(),
+                'description': doc.description,
+                'is_verified': doc.is_verified,
+                'verified_by': doc.verified_by.get_full_name() if doc.verified_by else None,
+                'verified_at': doc.verified_at,
+                'verification_notes': doc.verification_notes,
+                'created_at': doc.created_at
+            } for doc in obj.documents.all()]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting documents for professional {obj.id}: {str(e)}")
+            return []
+    
+    def get_verification_documents(self, obj):
+        """Get verification documents list"""
+        try:
+            return obj.verification_documents
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting verification documents for professional {obj.id}: {str(e)}")
+            return []
+    
+    def get_profile_completion_status(self, obj):
+        """Get profile completion status"""
+        try:
+            return {
+                'bio_completed': bool(obj.bio),
+                'experience_added': obj.experience_years > 0,
+                'regions_added': obj.regions.exists(),
+                'services_added': obj.services.exists(),
+                'availability_set': obj.availability_schedule.exists(),
+                'documents_uploaded': obj.documents.exists(),
+                'is_verified': obj.is_verified,
+                'completion_percentage': self._calculate_completion_percentage(obj)
+            }
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting profile completion status for professional {obj.id}: {str(e)}")
+            return {}
+    
+    def _calculate_completion_percentage(self, obj):
+        """Calculate profile completion percentage"""
+        try:
+            total_fields = 6
+            completed_fields = 0
+            
+            if obj.bio:
+                completed_fields += 1
+            if obj.experience_years > 0:
+                completed_fields += 1
+            if obj.regions.exists():
+                completed_fields += 1
+            if obj.services.exists():
+                completed_fields += 1
+            if obj.availability_schedule.exists():
+                completed_fields += 1
+            if obj.documents.exists():
+                completed_fields += 1
+            
+            return round((completed_fields / total_fields) * 100, 1)
+        except Exception:
+            return 0.0
     
     
 

@@ -25,4 +25,7 @@ urlpatterns = [
     
     # Document upload
     path('documents/', views.DocumentUploadView.as_view(), name='document_upload'),
+    
+    # Admin views
+    path('admin/<int:id>/', views.AdminProfessionalDetailView.as_view(), name='admin_professional_detail'),
 ]

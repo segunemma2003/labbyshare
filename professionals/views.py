@@ -19,7 +19,8 @@ from .serializers import (
     ProfessionalListSerializer, ProfessionalDetailSerializer,
     ProfessionalRegistrationSerializer, AvailabilityCreateSerializer,
     UnavailabilitySerializer, ProfessionalDocumentSerializer,
-    AvailabilitySlotSerializer, ProfessionalSearchSerializer
+    AvailabilitySlotSerializer, ProfessionalSearchSerializer,
+    ProfessionalUpdateSerializer, ProfessionalAdminDetailSerializer
 )
 from .filters import ProfessionalFilter
 from utils.permissions import IsVerifiedProfessional, IsOwnerOrReadOnly
@@ -152,8 +153,12 @@ class ProfessionalProfileView(generics.RetrieveUpdateAPIView):
     """
     View and update professional profile
     """
-    serializer_class = ProfessionalDetailSerializer
     permission_classes = [IsVerifiedProfessional, IsOwnerOrReadOnly]
+    
+    def get_serializer_class(self):
+        if self.request.method in ['PUT', 'PATCH']:
+            return ProfessionalUpdateSerializer
+        return ProfessionalDetailSerializer
     
     def get_object(self):
         # Handle schema generation with AnonymousUser
@@ -650,3 +655,32 @@ def professional_dashboard(request):
     }
     
     return Response(stats)
+
+
+class AdminProfessionalDetailView(generics.RetrieveAPIView):
+    """
+    Get comprehensive professional information for admin
+    """
+    serializer_class = ProfessionalAdminDetailSerializer
+    permission_classes = [permissions.IsAdminUser]
+    lookup_field = 'id'
+    
+    @swagger_auto_schema(
+        operation_description="Get comprehensive professional information for admin",
+        responses={200: ProfessionalAdminDetailSerializer()}
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
+    def get_queryset(self):
+        return Professional.objects.select_related(
+            'user'
+        ).prefetch_related(
+            'regions',
+            'services',
+            'availability_schedule',
+            'documents',
+            'professionalservice_set__service__category',
+            'professionalservice_set__region',
+            'professionalregion_set__region'
+        )

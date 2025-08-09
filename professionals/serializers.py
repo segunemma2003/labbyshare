@@ -371,3 +371,342 @@ class ProfessionalSearchSerializer(serializers.Serializer):
         required=False
     )
     verified_only = serializers.BooleanField(default=True)
+
+
+class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
+    """
+    Serializer for professional availability data in update operations
+    """
+    region_id = serializers.IntegerField()
+    weekday = serializers.IntegerField(min_value=0, max_value=6)  # 0=Monday, 6=Sunday
+    start_time = serializers.TimeField()
+    end_time = serializers.TimeField()
+    break_start = serializers.TimeField(required=False, allow_null=True)
+    break_end = serializers.TimeField(required=False, allow_null=True)
+    is_active = serializers.BooleanField(default=True)
+    
+    def validate(self, attrs):
+        # Validate that end_time is after start_time
+        start_time = attrs['start_time']
+        end_time = attrs['end_time']
+        break_start = attrs.get('break_start')
+        break_end = attrs.get('break_end')
+        
+        if start_time >= end_time:
+            raise serializers.ValidationError("End time must be after start time")
+        
+        if break_start and break_end:
+            if break_start >= break_end:
+                raise serializers.ValidationError("Break end time must be after break start time")
+            
+            if not (start_time <= break_start <= break_end <= end_time):
+                raise serializers.ValidationError("Break times must be within working hours")
+        
+        return attrs
+
+
+class ProfessionalUpdateSerializer(serializers.ModelSerializer):
+    """
+    Professional profile update serializer - allows patching all fields
+    """
+    # User fields that can be updated
+    first_name = serializers.CharField(source='user.first_name', required=False)
+    last_name = serializers.CharField(source='user.last_name', required=False)
+    phone_number = serializers.CharField(source='user.phone_number', required=False)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
+    gender = serializers.CharField(source='user.gender', required=False)
+    profile_picture = serializers.ImageField(source='user.profile_picture', required=False)
+    
+    # Professional fields
+    regions = serializers.PrimaryKeyRelatedField(
+        queryset=Region.objects.filter(is_active=True),
+        many=True,
+        required=False
+    )
+    services = serializers.PrimaryKeyRelatedField(
+        queryset=Service.objects.filter(is_active=True),
+        many=True,
+        required=False
+    )
+    
+    # Professional status fields
+    is_verified = serializers.BooleanField(required=False)
+    is_active = serializers.BooleanField(required=False)
+    
+    # Availability data
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    
+    class Meta:
+        model = Professional
+        fields = [
+            # User fields
+            'first_name', 'last_name', 'phone_number', 'date_of_birth', 'gender', 'profile_picture',
+            # Professional fields
+            'bio', 'experience_years', 'travel_radius_km', 
+            'min_booking_notice_hours', 'cancellation_policy',
+            'regions', 'services', 'availability',
+            # Status fields
+            'is_verified', 'is_active'
+        ]
+    
+    def update(self, instance, validated_data):
+        # Handle user fields
+        user_data = {}
+        if 'user' in validated_data:
+            user_data = validated_data.pop('user')
+            user = instance.user
+            for field, value in user_data.items():
+                setattr(user, field, value)
+            user.save()
+        
+        # Handle regions and services
+        regions = validated_data.pop('regions', None)
+        services = validated_data.pop('services', None)
+        availability_data = validated_data.pop('availability', None)
+        
+        # Update professional fields
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        
+        # Update regions if provided
+        if regions is not None:
+            instance.regions.set(regions)
+        
+        # Update services if provided
+        if services is not None:
+            # Clear existing services and create new ones
+            from .models import ProfessionalService
+            instance.professionalservice_set.all().delete()
+            for region in instance.regions.all():
+                for service in services:
+                    ProfessionalService.objects.create(
+                        professional=instance,
+                        service=service,
+                        region=region
+                    )
+        
+        # Update availability if provided
+        if availability_data is not None:
+            # Clear existing availability for this professional
+            from .models import ProfessionalAvailability
+            from regions.models import Region
+            instance.availability_schedule.all().delete()
+            
+            # Create new availability entries
+            for availability_item in availability_data:
+                try:
+                    region_id = availability_item.get('region_id')
+                    if region_id:
+                        region = Region.objects.get(id=region_id)
+                        ProfessionalAvailability.objects.create(
+                            professional=instance,
+                            region=region,
+                            weekday=availability_item.get('weekday', 0),
+                            start_time=availability_item.get('start_time'),
+                            end_time=availability_item.get('end_time'),
+                            break_start=availability_item.get('break_start'),
+                            break_end=availability_item.get('break_end'),
+                            is_active=availability_item.get('is_active', True)
+                        )
+                except (Region.DoesNotExist, KeyError, ValueError):
+                    # Skip invalid availability data
+                    continue
+        
+        instance.save()
+        return instance
+
+
+class ProfessionalAdminDetailSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive professional information for admin API
+    """
+    # User fields
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    phone_number = serializers.CharField(source='user.phone_number', read_only=True)
+    user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    date_joined = serializers.DateTimeField(source='user.date_joined', read_only=True)
+    last_login = serializers.DateTimeField(source='user.last_login', read_only=True)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', read_only=True)
+    gender = serializers.CharField(source='user.gender', read_only=True)
+    profile_picture = serializers.ImageField(source='user.profile_picture', read_only=True)
+    
+    # Professional stats
+    total_bookings = serializers.SerializerMethodField()
+    total_earnings = serializers.SerializerMethodField()
+    regions_served = serializers.SerializerMethodField()
+    services_offered = serializers.SerializerMethodField()
+    availability_by_region = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
+    verification_documents = serializers.SerializerMethodField()
+    profile_completion_status = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Professional
+        fields = [
+            # Basic info
+            'id', 'first_name', 'last_name', 'email', 'phone_number', 
+            'user_is_active', 'date_joined', 'last_login', 'date_of_birth', 'gender',
+            'profile_picture',
+            
+            # Professional details
+            'bio', 'experience_years', 'rating', 'total_reviews',
+            'is_verified', 'is_active', 'travel_radius_km', 
+            'min_booking_notice_hours', 'cancellation_policy',
+            'commission_rate', 'profile_completed', 'verified_at',
+            
+            # Stats and relationships
+            'total_bookings', 'total_earnings', 'regions_served',
+            'services_offered', 'availability_by_region', 'documents',
+            'verification_documents', 'profile_completion_status',
+            
+            # Timestamps
+            'created_at', 'updated_at'
+        ]
+    
+    def get_total_bookings(self, obj):
+        try:
+            from bookings.models import Booking
+            return Booking.objects.filter(professional=obj).count()
+        except Exception:
+            return 0
+    
+    def get_total_earnings(self, obj):
+        try:
+            from bookings.models import Booking
+            completed_bookings = Booking.objects.filter(
+                professional=obj, 
+                status='completed'
+            )
+            return float(sum(booking.total_amount for booking in completed_bookings))
+        except Exception:
+            return 0.0
+    
+    def get_regions_served(self, obj):
+        try:
+            return [{
+                'id': r.id, 
+                'name': r.name, 
+                'code': r.code,
+                'is_primary': obj.professionalregion_set.filter(region=r).first().is_primary if obj.professionalregion_set.filter(region=r).exists() else False
+            } for r in obj.regions.all()]
+        except Exception:
+            return []
+    
+    def get_services_offered(self, obj):
+        try:
+            services_data = []
+            for ps in obj.professionalservice_set.select_related('service', 'service__category').all():
+                services_data.append({
+                    'id': ps.service.id,
+                    'name': ps.service.name,
+                    'category': ps.service.category.name,
+                    'region_id': ps.region.id,
+                    'region_name': ps.region.name,
+                    'custom_price': float(ps.custom_price) if ps.custom_price else None,
+                    'effective_price': float(ps.get_price()),
+                    'is_active': ps.is_active,
+                    'preparation_time_minutes': ps.preparation_time_minutes,
+                    'cleanup_time_minutes': ps.cleanup_time_minutes
+                })
+            return services_data
+        except Exception:
+            return []
+    
+    def get_availability_by_region(self, obj):
+        """Get availability grouped by region"""
+        try:
+            availability_data = {}
+            
+            for availability in obj.availability_schedule.filter(is_active=True).select_related('region'):
+                try:
+                    region_id = availability.region.id
+                    region_name = availability.region.name
+                    
+                    if region_id not in availability_data:
+                        availability_data[region_id] = {
+                            'region_id': region_id,
+                            'region_name': region_name,
+                            'schedule': []
+                        }
+                    
+                    availability_data[region_id]['schedule'].append({
+                        'id': availability.id,
+                        'weekday': availability.weekday,
+                        'weekday_name': availability.get_weekday_display(),
+                        'start_time': availability.start_time.strftime('%H:%M') if availability.start_time else None,
+                        'end_time': availability.end_time.strftime('%H:%M') if availability.end_time else None,
+                        'break_start': availability.break_start.strftime('%H:%M') if availability.break_start else None,
+                        'break_end': availability.break_end.strftime('%H:%M') if availability.break_end else None,
+                        'is_active': availability.is_active
+                    })
+                except Exception:
+                    continue
+            
+            return list(availability_data.values())
+        except Exception:
+            return []
+    
+    def get_documents(self, obj):
+        """Get all professional documents"""
+        try:
+            return [{
+                'id': doc.id,
+                'document_type': doc.document_type,
+                'document_type_display': doc.get_document_type_display(),
+                'description': doc.description,
+                'is_verified': doc.is_verified,
+                'verified_by': doc.verified_by.get_full_name() if doc.verified_by else None,
+                'verified_at': doc.verified_at,
+                'verification_notes': doc.verification_notes,
+                'created_at': doc.created_at
+            } for doc in obj.documents.all()]
+        except Exception:
+            return []
+    
+    def get_verification_documents(self, obj):
+        """Get verification documents list"""
+        try:
+            return obj.verification_documents
+        except Exception:
+            return []
+    
+    def get_profile_completion_status(self, obj):
+        """Get profile completion status"""
+        try:
+            return {
+                'bio_completed': bool(obj.bio),
+                'experience_added': obj.experience_years > 0,
+                'regions_added': obj.regions.exists(),
+                'services_added': obj.services.exists(),
+                'availability_set': obj.availability_schedule.exists(),
+                'documents_uploaded': obj.documents.exists(),
+                'is_verified': obj.is_verified,
+                'completion_percentage': self._calculate_completion_percentage(obj)
+            }
+        except Exception:
+            return {}
+    
+    def _calculate_completion_percentage(self, obj):
+        """Calculate profile completion percentage"""
+        try:
+            total_fields = 6
+            completed_fields = 0
+            
+            if obj.bio:
+                completed_fields += 1
+            if obj.experience_years > 0:
+                completed_fields += 1
+            if obj.regions.exists():
+                completed_fields += 1
+            if obj.services.exists():
+                completed_fields += 1
+            if obj.availability_schedule.exists():
+                completed_fields += 1
+            if obj.documents.exists():
+                completed_fields += 1
+            
+            return round((completed_fields / total_fields) * 100, 1)
+        except Exception:
+            return 0.0
