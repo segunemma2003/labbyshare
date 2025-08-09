@@ -33,17 +33,22 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         # Validate that end_time is after start_time
-        if attrs['end_time'] <= attrs['start_time']:
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+        
+        if start_time and end_time and end_time <= start_time:
             raise serializers.ValidationError("End time must be after start time")
         
         # Validate break times if provided
-        if attrs.get('break_start') and attrs.get('break_end'):
-            if attrs['break_end'] <= attrs['break_start']:
+        break_start = attrs.get('break_start')
+        break_end = attrs.get('break_end')
+        
+        if break_start and break_end:
+            if break_end <= break_start:
                 raise serializers.ValidationError("Break end time must be after break start time")
             
             # Validate break is within working hours
-            if (attrs['break_start'] < attrs['start_time'] or 
-                attrs['break_end'] > attrs['end_time']):
+            if start_time and end_time and (break_start < start_time or break_end > end_time):
                 raise serializers.ValidationError("Break time must be within working hours")
         
         return attrs
@@ -442,7 +447,26 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             # Create new availability entries
             for availability_item in availability_data:
                 try:
-                    region = Region.objects.get(id=availability_item['region_id'])
+                    # Debug logging
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Processing availability item: {availability_item}")
+                    
+                    region_id = availability_item.get('region_id')
+                    if not region_id:
+                        logger.warning(f"Missing region_id in availability item: {availability_item}")
+                        continue
+                        
+                    region = Region.objects.get(id=region_id)
+                    
+                    # Check for required fields
+                    required_fields = ['weekday', 'start_time', 'end_time']
+                    missing_fields = [field for field in required_fields if field not in availability_item]
+                    
+                    if missing_fields:
+                        logger.warning(f"Missing required fields in availability item: {missing_fields}")
+                        continue
+                    
                     ProfessionalAvailability.objects.create(
                         professional=instance,
                         region=region,
@@ -453,8 +477,15 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                         break_end=availability_item.get('break_end'),
                         is_active=availability_item.get('is_active', True)
                     )
-                except (Region.DoesNotExist, KeyError, ValueError):
-                    # Skip invalid availability data
+                    
+                    logger.debug(f"Successfully created availability for region {region_id}")
+                    
+                except (Region.DoesNotExist, KeyError, ValueError) as e:
+                    # Log the specific error
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error creating availability: {str(e)}")
+                    logger.error(f"Availability item: {availability_item}")
                     continue
         
         return instance
