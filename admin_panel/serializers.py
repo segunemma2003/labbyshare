@@ -147,16 +147,8 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     profile_picture = serializers.ImageField(required=False)
     
     # Professional fields
-    regions = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True
-    )
-    services = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True
-    )
+    regions = serializers.CharField(required=False, allow_blank=True)
+    services = serializers.CharField(required=False, allow_blank=True)
     
     # Availability data
     availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
@@ -404,6 +396,19 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         services = validated_data.pop('services')
         availability_data = validated_data.pop('availability', [])
         
+        # Convert regions and services from string to list of integers
+        if regions:
+            try:
+                regions = [int(r.strip()) for r in regions.split(',') if r.strip()]
+            except (ValueError, AttributeError):
+                regions = []
+        
+        if services:
+            try:
+                services = [int(s.strip()) for s in services.split(',') if s.strip()]
+            except (ValueError, AttributeError):
+                services = []
+        
         # Set default values for admin-created professionals
         validated_data.setdefault('is_verified', True)
         validated_data.setdefault('is_active', True)
@@ -507,16 +512,8 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     gender = serializers.CharField(required=False)
     profile_picture = serializers.ImageField(required=False, allow_null=True)
     user_is_active = serializers.BooleanField(required=False)
-    regions = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True
-    )
-    services = serializers.ListField(
-        child=serializers.IntegerField(),
-        required=False,
-        allow_empty=True
-    )
+    regions = serializers.CharField(required=False, allow_blank=True)
+    services = serializers.CharField(required=False, allow_blank=True)
     
     # Professional status fields
     is_verified = serializers.BooleanField(required=False)
@@ -577,59 +574,51 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 data['profile_picture'] = None
                 logger.debug("None profile picture, keeping as None")
         
-        # CRITICAL FIX: Handle regions properly for PrimaryKeyRelatedField with many=True
+        # CRITICAL FIX: Handle regions properly for CharField format
         if 'regions' in data:
             regions_value = data.getlist('regions') if hasattr(data, 'getlist') else data['regions']
             logger.debug(f"Raw regions value: {regions_value}, type: {type(regions_value)}")
             
             if regions_value is None or regions_value == '':
-                data['regions'] = []
+                data['regions'] = ''
             elif isinstance(regions_value, (list, tuple)):
-                # Convert string IDs to integers
+                # Convert list to comma-separated string
                 try:
-                    processed_regions = [int(r) for r in regions_value if r]
-                    data['regions'] = processed_regions
-                    logger.debug(f"Processed regions: {processed_regions}")
+                    processed_regions = [str(r) for r in regions_value if r]
+                    data['regions'] = ','.join(processed_regions)
+                    logger.debug(f"Processed regions: {data['regions']}")
                 except (ValueError, TypeError) as e:
-                    logger.error(f"Error converting regions to integers: {e}")
-                    data['regions'] = []
+                    logger.error(f"Error converting regions to string: {e}")
+                    data['regions'] = ''
             elif regions_value:
-                # Single value - convert to list of integers
-                try:
-                    data['regions'] = [int(regions_value)]
-                    logger.debug(f"Converted single region to list: {data['regions']}")
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Error converting single region to integer: {e}")
-                    data['regions'] = []
+                # Single value - keep as string
+                data['regions'] = str(regions_value)
+                logger.debug(f"Converted single region to string: {data['regions']}")
             else:
-                data['regions'] = []
+                data['regions'] = ''
         
-        # CRITICAL FIX: Handle services properly for PrimaryKeyRelatedField with many=True
+        # CRITICAL FIX: Handle services properly for CharField format
         if 'services' in data:
             services_value = data.getlist('services') if hasattr(data, 'getlist') else data['services']
             logger.debug(f"Raw services value: {services_value}, type: {type(services_value)}")
             
             if services_value is None or services_value == '':
-                data['services'] = []
+                data['services'] = ''
             elif isinstance(services_value, (list, tuple)):
-                # Convert string IDs to integers
+                # Convert list to comma-separated string
                 try:
-                    processed_services = [int(s) for s in services_value if s]
-                    data['services'] = processed_services
-                    logger.debug(f"Processed services: {processed_services}")
+                    processed_services = [str(s) for s in services_value if s]
+                    data['services'] = ','.join(processed_services)
+                    logger.debug(f"Processed services: {data['services']}")
                 except (ValueError, TypeError) as e:
-                    logger.error(f"Error converting services to integers: {e}")
-                    data['services'] = []
+                    logger.error(f"Error converting services to string: {e}")
+                    data['services'] = ''
             elif services_value:
-                # Single value - convert to list of integers
-                try:
-                    data['services'] = [int(services_value)]
-                    logger.debug(f"Converted single service to list: {data['services']}")
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Error converting single service to integer: {e}")
-                    data['services'] = []
+                # Single value - keep as string
+                data['services'] = str(services_value)
+                logger.debug(f"Converted single service to string: {data['services']}")
             else:
-                data['services'] = []
+                data['services'] = ''
         
         # Parse availability data from form data format (availability[0][field])
         availability_data = []
@@ -864,6 +853,19 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 regions = validated_data.pop('regions', None)
                 services = validated_data.pop('services', None)
                 availability_data = validated_data.pop('availability', None)
+                
+                # Convert regions and services from string to list of integers
+                if regions:
+                    try:
+                        regions = [int(r.strip()) for r in regions.split(',') if r.strip()]
+                    except (ValueError, AttributeError):
+                        regions = []
+                
+                if services:
+                    try:
+                        services = [int(s.strip()) for s in services.split(',') if s.strip()]
+                    except (ValueError, AttributeError):
+                        services = []
                 
                 # Update professional fields (excluding user fields)
                 professional_updated = False
