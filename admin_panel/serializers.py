@@ -31,8 +31,91 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
     break_end = serializers.TimeField(required=False, allow_null=True)
     is_active = serializers.BooleanField(default=True)
 
+    def to_internal_value(self, data):
+        """
+        Custom to_internal_value to handle time parsing from various formats
+        """
+        import logging
+        from datetime import datetime, time
+        
+        logger = logging.getLogger(__name__)
+        logger.debug(f"ProfessionalAvailabilityDataSerializer.to_internal_value called with: {data}")
+        
+        # Create a copy to avoid modifying original data
+        processed_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        
+        def parse_time_field(time_str, field_name):
+            """Parse time string and return time object or None"""
+            if not time_str:
+                return None
+                
+            if isinstance(time_str, time):
+                # Already a time object
+                return time_str
+            
+            if not isinstance(time_str, str):
+                time_str = str(time_str)
+            
+            time_str = time_str.strip()
+            if not time_str:
+                return None
+            
+            logger.debug(f"Parsing {field_name}: '{time_str}'")
+            
+            # Try different time formats
+            for fmt in ['%H:%M:%S', '%H:%M', '%I:%M %p', '%I:%M:%S %p']:
+                try:
+                    parsed_time = datetime.strptime(time_str, fmt).time()
+                    logger.debug(f"  ✅ Parsed '{time_str}' using format '{fmt}' -> {parsed_time}")
+                    return parsed_time
+                except ValueError:
+                    continue
+            
+            # If no format worked, try manual parsing for HH:MM format
+            if ':' in time_str:
+                try:
+                    parts = time_str.split(':')
+                    if len(parts) == 2:
+                        hours = int(parts[0])
+                        minutes = int(parts[1])
+                        if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                            parsed_time = time(hours, minutes)
+                            logger.debug(f"  ✅ Manual parsed '{time_str}' -> {parsed_time}")
+                            return parsed_time
+                except (ValueError, IndexError):
+                    pass
+            
+            logger.error(f"  ❌ Could not parse {field_name} '{time_str}'")
+            raise serializers.ValidationError(
+                f"Invalid time format for {field_name}: '{time_str}'. Expected formats: HH:MM, HH:MM:SS"
+            )
+        
+        # Parse time fields
+        time_fields = ['start_time', 'end_time', 'break_start', 'break_end']
+        for field in time_fields:
+            if field in processed_data:
+                try:
+                    processed_data[field] = parse_time_field(processed_data[field], field)
+                except serializers.ValidationError:
+                    # Re-raise validation errors
+                    raise
+                except Exception as e:
+                    logger.error(f"Unexpected error parsing {field}: {e}")
+                    raise serializers.ValidationError(
+                        f"Error parsing {field}: {str(e)}"
+                    )
+        
+        logger.debug(f"Processed data: {processed_data}")
+        
+        # Call parent to_internal_value with processed data
+        return super().to_internal_value(processed_data)
+
     def validate(self, attrs):
         """Enhanced validation with better error messages"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"ProfessionalAvailabilityDataSerializer.validate called with: {attrs}")
+        
         # Validate that end_time is after start_time
         start_time = attrs.get('start_time')
         end_time = attrs.get('end_time')
@@ -83,6 +166,7 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
                     'region_id': f"Region with ID {region_id} does not exist or is not active"
                 })
         
+        logger.debug(f"Validation successful: {attrs}")
         return attrs
 
 # ===================== USER MANAGEMENT SERIALIZERS =====================
@@ -206,7 +290,45 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this email already exists.")
         return value
     
+    def to_internal_value(self, data):
+        """
+        Custom to_internal_value to handle complex data structures
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data keys: {list(data.keys())}")
+        
+        # Handle the availability data separately to avoid conflicts
+        availability_data = data.get('availability', [])
+        if availability_data:
+            logger.debug(f"Processing {len(availability_data)} availability items")
+            processed_availability = []
+            for i, item in enumerate(availability_data):
+                try:
+                    # Create a new serializer instance for each availability item
+                    availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
+                    if availability_serializer.is_valid():
+                        processed_availability.append(availability_serializer.validated_data)
+                        logger.debug(f"  ✅ Availability item {i} validated successfully")
+                    else:
+                        logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
+                        raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
+                except Exception as e:
+                    logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
+                    raise serializers.ValidationError({f'availability[{i}]': str(e)})
+            
+            # Replace the availability data with processed data
+            data = data.copy()
+            data['availability'] = processed_availability
+            logger.debug(f"Processed all availability items successfully")
+        
+        return super().to_internal_value(data)
+    
     def create(self, validated_data):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"AdminProfessionalCreateSerializer.create called")
+        
         # Extract user fields
         user_fields = {
             'first_name': validated_data.pop('first_name'),
@@ -223,6 +345,8 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         services = validated_data.pop('services')
         availability_data = validated_data.pop('availability', [])
         
+        logger.debug(f"Creating user with email: {user_fields['email']}")
+        
         # Create user
         user = User.objects.create_user(
             username=user_fields['email'],
@@ -232,11 +356,15 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         user.current_region = regions[0] if regions else None
         user.save()
         
+        logger.debug(f"Created user {user.id}, creating professional")
+        
         # Create professional
         professional = Professional.objects.create(
             user=user,
             **validated_data
         )
+        
+        logger.debug(f"Created professional {professional.id}, setting regions and services")
         
         # Set regions and services
         professional.regions.set(regions)
@@ -249,6 +377,8 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                     service=service,
                     region=region
                 )
+        
+        logger.debug(f"Created ProfessionalService entries, processing availability")
         
         # Create availability entries
         for availability_item in availability_data:
@@ -264,10 +394,15 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
                     break_end=availability_item.get('break_end'),
                     is_active=availability_item.get('is_active', True)
                 )
+                logger.debug(f"Created availability for region {region.id}, weekday {availability_item['weekday']}")
             except Region.DoesNotExist:
-                # Skip if region doesn't exist
+                logger.warning(f"Region {availability_item['region_id']} not found, skipping availability")
+                continue
+            except Exception as e:
+                logger.error(f"Error creating availability: {str(e)}")
                 continue
         
+        logger.info(f"✅ Successfully created professional {professional.id}")
         return professional
     
     def to_representation(self, instance):
@@ -345,6 +480,40 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(f"Invalid service IDs: {list(missing_ids)}")
         
         return list(valid_services)
+    
+    def to_internal_value(self, data):
+        """
+        Custom to_internal_value to handle complex data structures
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"AdminProfessionalUpdateSerializer.to_internal_value called")
+        
+        # Handle the availability data separately to avoid conflicts
+        availability_data = data.get('availability', [])
+        if availability_data:
+            logger.debug(f"Processing {len(availability_data)} availability items for update")
+            processed_availability = []
+            for i, item in enumerate(availability_data):
+                try:
+                    # Create a new serializer instance for each availability item
+                    availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
+                    if availability_serializer.is_valid():
+                        processed_availability.append(availability_serializer.validated_data)
+                        logger.debug(f"  ✅ Availability item {i} validated successfully")
+                    else:
+                        logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
+                        raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
+                except Exception as e:
+                    logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
+                    raise serializers.ValidationError({f'availability[{i}]': str(e)})
+            
+            # Replace the availability data with processed data
+            data = data.copy()
+            data['availability'] = processed_availability
+            logger.debug(f"Processed all availability items successfully for update")
+        
+        return super().to_internal_value(data)
     
     def validate_email(self, value):
         """Validate email uniqueness"""
@@ -452,15 +621,19 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                             break_end=availability_item.get('break_end'),
                             is_active=availability_item.get('is_active', True)
                         )
+                        logger.debug(f"Created availability for region {region.id}, weekday {availability_item['weekday']}")
                     except Region.DoesNotExist:
                         logger.warning(f"Region {availability_item['region_id']} not found, skipping availability")
                         continue
+                    except Exception as e:
+                        logger.error(f"Error creating availability: {str(e)}")
+                        continue
             
-            logger.info(f"Successfully updated professional {instance.id}")
+            logger.info(f"✅ Successfully updated professional {instance.id}")
             return instance
             
         except Exception as e:
-            logger.error(f"Error updating professional {instance.id}: {str(e)}")
+            logger.error(f"💥 Error updating professional {instance.id}: {str(e)}")
             raise serializers.ValidationError(f"Failed to update professional: {str(e)}")
 
 
@@ -1035,4 +1208,5 @@ class SupportTicketSerializer(serializers.ModelSerializer):
             'category', 'priority', 'status', 'assigned_to', 'assigned_to_name',
             'related_booking', 'created_at', 'updated_at', 'resolved_at'
         ]
+
 

@@ -351,9 +351,9 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         return AdminProfessionalDetailSerializer
     
     @swagger_auto_schema(
-        operation_description="Create new professional (admin)",
-        request_body=AdminProfessionalCreateSerializer,
-        responses={201: AdminProfessionalDetailSerializer()}
+    operation_description="Create new professional (admin)",
+    request_body=AdminProfessionalCreateSerializer,
+    responses={201: AdminProfessionalDetailSerializer()}
     )
     def post(self, request, *args, **kwargs):
         logger = logging.getLogger(__name__)
@@ -369,30 +369,10 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         logger.info(f"📋 Request data keys: {list(request.data.keys())}")
         logger.info(f"📋 Request FILES keys: {list(request.FILES.keys())}")
         
-        # Log each field with its type and value
-        for key, value in request.data.items():
-            logger.info(f"📋 Field '{key}': type={type(value)}, value='{value}'")
-        
-        # Log files
-        for key, value in request.FILES.items():
-            logger.info(f"📋 File '{key}': type={type(value)}, name='{value.name}'")
-        
-        logger.debug(f"Creating professional with data keys: {list(request.data.keys())}")
-        logger.debug(f"Request files keys: {list(request.FILES.keys())}")
-        
         # Handle multipart form data preprocessing
         data = request.data.copy()
         
-        # 🔍 LOG BEFORE BOOLEAN PROCESSING
-        logger.info("🔧 BEFORE BOOLEAN PROCESSING:")
-        for field in ['is_verified', 'is_active']:
-            if field in data:
-                logger.info(f"  {field}: type={type(data[field])}, value='{data[field]}'")
-            else:
-                logger.info(f"  {field}: NOT FOUND")
-        
         # Handle boolean fields FIRST - convert string "true"/"false" to actual booleans
-        # This must happen before any serializer processing
         boolean_fields = ['is_verified', 'is_active']
         for field in boolean_fields:
             if field in data:
@@ -449,18 +429,6 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                     # Convert to boolean
                     data[field] = bool(value)
                     logger.info(f"  ✅ Converted other type to {data[field]}")
-            else:
-                logger.info(f"🔧 Field '{field}' not found in data")
-        
-        # Log the processed boolean values for debugging
-        logger.info("🔧 AFTER BOOLEAN PROCESSING:")
-        for field in boolean_fields:
-            if field in data:
-                logger.info(f"  {field}: type={type(data[field])}, value={data[field]}")
-            else:
-                logger.info(f"  {field}: NOT FOUND")
-        
-        logger.debug(f"🔧 Processed boolean fields: {[(field, data.get(field, 'NOT_FOUND')) for field in boolean_fields]}")
         
         # Special handling for profile_picture
         if 'profile_picture' in request.FILES:
@@ -478,7 +446,6 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                     data['profile_picture'] = None
                 else:
                     logger.error(f"Multiple profile pictures detected: {len(pp_value)}")
-                    # Let the serializer handle this error
             elif isinstance(pp_value, str) and pp_value.strip() == "":
                 data['profile_picture'] = None
         
@@ -528,111 +495,156 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                         'details': str(e)
                     }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Handle availability data
+        # FIXED: Handle availability data with proper time parsing
         availability_data = []
         i = 0
         while f'availability[{i}][region_id]' in data:
             try:
-                # Get the raw time values
+                # Extract raw availability data
+                region_id = data.get(f'availability[{i}][region_id]')
+                weekday = data.get(f'availability[{i}][weekday]')
                 start_time_str = data.get(f'availability[{i}][start_time]')
                 end_time_str = data.get(f'availability[{i}][end_time]')
                 break_start_str = data.get(f'availability[{i}][break_start]')
                 break_end_str = data.get(f'availability[{i}][break_end]')
+                is_active_str = data.get(f'availability[{i}][is_active]', 'true')
                 
-                # Convert time strings to time objects
-                from datetime import datetime
+                logger.debug(f"Processing availability item {i}:")
+                logger.debug(f"  region_id: {region_id} ({type(region_id)})")
+                logger.debug(f"  weekday: {weekday} ({type(weekday)})")
+                logger.debug(f"  start_time: {start_time_str} ({type(start_time_str)})")
+                logger.debug(f"  end_time: {end_time_str} ({type(end_time_str)})")
+                logger.debug(f"  break_start: {break_start_str} ({type(break_start_str)})")
+                logger.debug(f"  break_end: {break_end_str} ({type(break_end_str)})")
+                logger.debug(f"  is_active: {is_active_str} ({type(is_active_str)})")
                 
-                start_time = None
-                end_time = None
-                break_start = None
-                break_end = None
+                # Validate required fields exist and are not empty
+                if not region_id or not weekday or not start_time_str or not end_time_str:
+                    logger.error(f"Missing required fields for availability item {i}")
+                    return Response({
+                        'error': f'Missing required fields for availability item {i}',
+                        'details': {
+                            'region_id': 'This field is required.' if not region_id else None,
+                            'weekday': 'This field is required.' if not weekday else None,
+                            'start_time': 'This field is required.' if not start_time_str else None,
+                            'end_time': 'This field is required.' if not end_time_str else None,
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
                 
-                if start_time_str:
-                    try:
-                        start_time = datetime.strptime(start_time_str, '%H:%M:%S').time()
-                    except ValueError:
+                # Convert and validate types
+                try:
+                    region_id_int = int(region_id)
+                    weekday_int = int(weekday)
+                except (ValueError, TypeError):
+                    return Response({
+                        'error': f'Invalid region_id or weekday for availability item {i}',
+                        'details': f'region_id: {region_id}, weekday: {weekday}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Parse time strings with better error handling
+                from datetime import datetime, time
+                
+                def parse_time_string(time_str, field_name):
+                    """Parse time string and return time object or None"""
+                    if not time_str or str(time_str).strip() == '':
+                        return None
+                    
+                    time_str = str(time_str).strip()
+                    
+                    # Try different time formats
+                    for fmt in ['%H:%M:%S', '%H:%M', '%I:%M %p', '%I:%M:%S %p']:
                         try:
-                            start_time = datetime.strptime(start_time_str, '%H:%M').time()
+                            parsed_time = datetime.strptime(time_str, fmt).time()
+                            logger.debug(f"  ✅ Parsed {field_name} '{time_str}' using format '{fmt}' -> {parsed_time}")
+                            return parsed_time
                         except ValueError:
-                            logger.error(f"Invalid start_time format: {start_time_str}")
-                            return Response({
-                                'error': f'Invalid start_time format for availability item {i}',
-                                'details': f'Expected HH:MM:SS or HH:MM, got: {start_time_str}'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                
-                if end_time_str:
-                    try:
-                        end_time = datetime.strptime(end_time_str, '%H:%M:%S').time()
-                    except ValueError:
+                            continue
+                    
+                    # If no format worked, try manual parsing for HH:MM format
+                    if ':' in time_str:
                         try:
-                            end_time = datetime.strptime(end_time_str, '%H:%M').time()
-                        except ValueError:
-                            logger.error(f"Invalid end_time format: {end_time_str}")
-                            return Response({
-                                'error': f'Invalid end_time format for availability item {i}',
-                                'details': f'Expected HH:MM:SS or HH:MM, got: {end_time_str}'
-                            }, status=status.HTTP_400_BAD_REQUEST)
+                            parts = time_str.split(':')
+                            if len(parts) == 2:
+                                hours = int(parts[0])
+                                minutes = int(parts[1])
+                                if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                                    parsed_time = time(hours, minutes)
+                                    logger.debug(f"  ✅ Manual parsed {field_name} '{time_str}' -> {parsed_time}")
+                                    return parsed_time
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    logger.error(f"  ❌ Could not parse {field_name} '{time_str}'")
+                    raise ValueError(f"Invalid time format for {field_name}: '{time_str}'. Expected formats: HH:MM, HH:MM:SS")
                 
-                if break_start_str:
-                    try:
-                        break_start = datetime.strptime(break_start_str, '%H:%M:%S').time()
-                    except ValueError:
-                        try:
-                            break_start = datetime.strptime(break_start_str, '%H:%M').time()
-                        except ValueError:
-                            logger.warning(f"Invalid break_start format: {break_start_str}, setting to None")
-                            break_start = None
+                # Parse time fields
+                try:
+                    start_time = parse_time_string(start_time_str, 'start_time')
+                    end_time = parse_time_string(end_time_str, 'end_time')
+                    break_start = parse_time_string(break_start_str, 'break_start')
+                    break_end = parse_time_string(break_end_str, 'break_end')
+                except ValueError as e:
+                    return Response({
+                        'error': f'Time parsing error for availability item {i}',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
                 
-                if break_end_str:
-                    try:
-                        break_end = datetime.strptime(break_end_str, '%H:%M:%S').time()
-                    except ValueError:
-                        try:
-                            break_end = datetime.strptime(break_end_str, '%H:%M').time()
-                        except ValueError:
-                            logger.warning(f"Invalid break_end format: {break_end_str}, setting to None")
-                            break_end = None
+                # Validate that required times are present
+                if not start_time or not end_time:
+                    return Response({
+                        'error': f'start_time and end_time are required for availability item {i}',
+                        'details': f'start_time: {start_time_str}, end_time: {end_time_str}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
                 
+                # Validate time logic
+                if end_time <= start_time:
+                    return Response({
+                        'error': f'End time must be after start time for availability item {i}',
+                        'details': f'Start: {start_time}, End: {end_time}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Validate break times if both are provided
+                if break_start and break_end:
+                    if break_end <= break_start:
+                        return Response({
+                            'error': f'Break end time must be after break start time for availability item {i}',
+                            'details': f'Break start: {break_start}, Break end: {break_end}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    # Validate break is within working hours
+                    if break_start < start_time or break_end > end_time:
+                        return Response({
+                            'error': f'Break times must be within working hours for availability item {i}',
+                            'details': f'Work: {start_time}-{end_time}, Break: {break_start}-{break_end}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                elif (break_start and not break_end) or (break_end and not break_start):
+                    return Response({
+                        'error': f'Both break start and end times are required if break is specified for availability item {i}',
+                        'details': f'break_start: {break_start}, break_end: {break_end}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Parse is_active
+                if isinstance(is_active_str, str):
+                    is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
+                else:
+                    is_active = bool(is_active_str)
+                
+                # Create the availability item
                 availability_item = {
-                    'region_id': int(data.get(f'availability[{i}][region_id]')),
-                    'weekday': int(data.get(f'availability[{i}][weekday]')),
+                    'region_id': region_id_int,
+                    'weekday': weekday_int,
                     'start_time': start_time,
                     'end_time': end_time,
                     'break_start': break_start,
                     'break_end': break_end,
-                    'is_active': data.get(f'availability[{i}][is_active]', 'true').lower() == 'true'
+                    'is_active': is_active
                 }
                 
-                # Validate that required fields are present
-                if (availability_item['region_id'] is not None and 
-                    availability_item['weekday'] is not None and
-                    availability_item['start_time'] and 
-                    availability_item['end_time']):
-                    
-                    # Validate that end_time is after start_time
-                    if availability_item['end_time'] <= availability_item['start_time']:
-                        logger.error(f"End time must be after start time for availability item {i}")
-                        return Response({
-                            'error': f'End time must be after start time for availability item {i}',
-                            'details': f'Start: {start_time_str}, End: {end_time_str}'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    
-                    availability_data.append(availability_item)
-                    logger.debug(f"Added availability item {i}: {availability_item}")
-                else:
-                    logger.warning(f"Skipping availability item {i} - missing required data: region_id={availability_item['region_id']}, weekday={availability_item['weekday']}, start_time={availability_item['start_time']}, end_time={availability_item['end_time']}")
-                    return Response({
-                        'error': f'Missing required fields for availability item {i}',
-                        'details': {
-                            'region_id': 'This field is required.' if availability_item['region_id'] is None else None,
-                            'weekday': 'This field is required.' if availability_item['weekday'] is None else None,
-                            'start_time': 'This field is required.' if not availability_item['start_time'] else None,
-                            'end_time': 'This field is required.' if not availability_item['end_time'] else None,
-                        }
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            except (ValueError, TypeError) as e:
-                logger.error(f"Error processing availability item {i}: {e}")
+                availability_data.append(availability_item)
+                logger.debug(f"✅ Added availability item {i}: {availability_item}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error processing availability item {i}: {str(e)}")
                 return Response({
                     'error': f'Invalid availability data for item {i}',
                     'details': str(e)
@@ -646,29 +658,7 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         
         # Continue with serializer processing
         try:
-            # 🔍 LOG FINAL DATA BEING PASSED TO SERIALIZER (CREATE)
-            logger.info("=" * 80)
-            logger.info("🔍 FINAL DATA BEING PASSED TO SERIALIZER (CREATE)")
-            logger.info("=" * 80)
-            logger.info(f"📋 Final data keys: {list(data.keys())}")
-            
-            # Log each field with its type and value
-            for key, value in data.items():
-                logger.info(f"📋 Final field '{key}': type={type(value)}, value='{value}'")
-            
-            # Special logging for boolean fields
-            logger.info("🔧 FINAL BOOLEAN FIELD STATUS:")
-            for field in ['is_verified', 'is_active']:
-                if field in data:
-                    logger.info(f"  {field}: type={type(data[field])}, value={data[field]}")
-                else:
-                    logger.info(f"  {field}: NOT FOUND")
-            
-            logger.debug(f"🔍 About to create serializer with data: {data}")
-            logger.debug(f"🔍 Data keys: {list(data.keys())}")
-            if 'availability' in data:
-                logger.debug(f"🔍 Availability data type: {type(data['availability'])}")
-                logger.debug(f"🔍 Availability data: {data['availability']}")
+            logger.debug(f"🔍 About to create serializer with data keys: {list(data.keys())}")
             
             serializer = self.get_serializer(data=data)
             
@@ -717,6 +707,9 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                 'error': 'Failed to create professional',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
 
 
 class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
