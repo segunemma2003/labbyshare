@@ -137,6 +137,9 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, validators=[validate_password])
     phone_number = serializers.CharField(required=False)
+    gender = serializers.ChoiceField(choices=User.GENDER_CHOICES, required=False)
+    date_of_birth = serializers.DateField(required=False)
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
     
     # Professional fields
     regions = serializers.PrimaryKeyRelatedField(
@@ -154,7 +157,8 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'first_name', 'last_name', 'email', 'password', 'phone_number',
+            'first_name', 'last_name', 'email', 'password', 'phone_number', 
+            'gender', 'date_of_birth', 'profile_picture',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
             'regions', 'services', 'availability'
@@ -172,6 +176,9 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
             'last_name': validated_data.pop('last_name'),
             'email': validated_data.pop('email'),
             'phone_number': validated_data.pop('phone_number', ''),
+            'gender': validated_data.pop('gender', ''),
+            'date_of_birth': validated_data.pop('date_of_birth', None),
+            'profile_picture': validated_data.pop('profile_picture', None),
             'user_type': 'professional'
         }
         password = validated_data.pop('password')
@@ -240,6 +247,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source='user.last_name')
     email = serializers.EmailField(source='user.email')
     phone_number = serializers.CharField(source='user.phone_number', required=False)
+    gender = serializers.ChoiceField(choices=User.GENDER_CHOICES, source='user.gender', required=False)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
+    profile_picture = serializers.ImageField(source='user.profile_picture', required=False, allow_null=True)
     user_is_active = serializers.BooleanField(source='user.is_active')
     regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
     services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
@@ -250,7 +260,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
+            'first_name', 'last_name', 'email', 'phone_number', 'gender', 'date_of_birth', 'profile_picture', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
             'regions', 'services', 'availability'
@@ -258,7 +268,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     
     def to_internal_value(self, data):
         # Remove user fields from data before processing to avoid assignment error
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'user_is_active']
+        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'gender', 'date_of_birth', 'profile_picture', 'user_is_active']
         internal_data = data.copy()
         
         # Store user data separately
@@ -278,6 +288,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 'last_name': 'last_name',
                 'email': 'email', 
                 'phone_number': 'phone_number',
+                'gender': 'gender',
+                'date_of_birth': 'date_of_birth',
+                'profile_picture': 'profile_picture',
                 'user_is_active': 'is_active'
             }
             
@@ -339,38 +352,26 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         
         # Handle availability updates
         if availability_data is not None:
-            try:
-                # Clear existing availability for this professional
-                instance.availability_schedule.all().delete()
-                
-                # Create new availability entries
-                for availability_item in availability_data:
-                    try:
-                        region = Region.objects.get(id=availability_item['region_id'])
-                        ProfessionalAvailability.objects.create(
-                            professional=instance,
-                            region=region,
-                            weekday=availability_item['weekday'],
-                            start_time=availability_item['start_time'],
-                            end_time=availability_item['end_time'],
-                            break_start=availability_item.get('break_start'),
-                            break_end=availability_item.get('break_end'),
-                            is_active=availability_item.get('is_active', True)
-                        )
-                    except Region.DoesNotExist:
-                        # Skip if region doesn't exist
-                        continue
-                    except Exception as e:
-                        # Log any other errors but continue
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"Error creating availability for professional {instance.id}: {str(e)}")
-                        continue
-            except Exception as e:
-                # Log any errors in availability handling
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error updating availability for professional {instance.id}: {str(e)}")
+            # Clear existing availability for this professional
+            instance.availability_schedule.all().delete()
+            
+            # Create new availability entries
+            for availability_item in availability_data:
+                try:
+                    region = Region.objects.get(id=availability_item['region_id'])
+                    ProfessionalAvailability.objects.create(
+                        professional=instance,
+                        region=region,
+                        weekday=availability_item['weekday'],
+                        start_time=availability_item['start_time'],
+                        end_time=availability_item['end_time'],
+                        break_start=availability_item.get('break_start'),
+                        break_end=availability_item.get('break_end'),
+                        is_active=availability_item.get('is_active', True)
+                    )
+                except Region.DoesNotExist:
+                    # Skip if region doesn't exist
+                    continue
         
         return instance
 
@@ -810,6 +811,9 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     phone_number = serializers.CharField(source='user.phone_number', read_only=True)
+    gender = serializers.CharField(source='user.gender', read_only=True)
+    date_of_birth = serializers.DateField(source='user.date_of_birth', read_only=True)
+    profile_picture = serializers.ImageField(source='user.profile_picture', read_only=True)
     user_is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     date_joined = serializers.DateTimeField(source='user.date_joined', read_only=True)
     
@@ -823,11 +827,11 @@ class AdminProfessionalDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'id', 'first_name', 'last_name', 'email', 'phone_number', 'user_is_active',
-            'date_joined', 'bio', 'experience_years', 'rating', 'total_reviews',
-            'is_verified', 'is_active', 'travel_radius_km', 'min_booking_notice_hours',
-            'commission_rate', 'total_bookings', 'total_earnings', 'regions_served',
-            'services_offered', 'availability_by_region', 'verified_at', 'created_at'
+            'id', 'first_name', 'last_name', 'email', 'phone_number', 'gender', 'date_of_birth', 'profile_picture', 'user_is_active', 'date_joined',
+            'bio', 'experience_years', 'rating', 'total_reviews', 'is_verified', 'is_active',
+            'travel_radius_km', 'min_booking_notice_hours', 'cancellation_policy', 'commission_rate',
+            'total_bookings', 'total_earnings', 'regions_served', 'services_offered', 'availability_by_region',
+            'created_at', 'updated_at', 'verified_at'
         ]
     
     def get_total_bookings(self, obj):

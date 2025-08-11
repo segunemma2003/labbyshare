@@ -24,6 +24,7 @@ from services.models import Category, Service, AddOn, RegionalPricing
 from regions.models import Region, RegionalSettings
 from notifications.models import Notification
 from utils.permissions import IsAdminUser
+from rest_framework.exceptions import ValidationError
 
 
 
@@ -381,6 +382,77 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ['PUT', 'PATCH']:
             return AdminProfessionalUpdateSerializer
         return AdminProfessionalDetailSerializer
+    
+    def get_serializer_context(self):
+        """
+        Add request to serializer context for PUT/PATCH validation
+        """
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+    
+    def perform_destroy(self, instance):
+        """
+        Smart deletion logic:
+        - If professional works in multiple regions: Remove from current region only
+        - If professional works in only one region: Delete professional + user completely
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Get the region to remove from (from query params or request)
+        region_id = self.request.query_params.get('region_id')
+        if region_id:
+            try:
+                region = Region.objects.get(id=region_id)
+            except Region.DoesNotExist:
+                logger.error(f"Region {region_id} not found for professional deletion")
+                raise ValidationError(f"Region {region_id} not found")
+        else:
+            # If no region specified, use the first region
+            regions = instance.regions.all()
+            if not regions.exists():
+                logger.error(f"Professional {instance.id} has no regions assigned")
+                raise ValidationError("Professional has no regions assigned")
+            region = regions.first()
+        
+        # Check how many regions this professional works in
+        total_regions = instance.regions.count()
+        
+        if total_regions > 1:
+            # Professional works in multiple regions - remove from current region only
+            logger.info(f"Removing professional {instance.id} from region {region.id} (works in {total_regions} regions)")
+            
+            # Remove from the specified region
+            instance.regions.remove(region)
+            
+            # Remove ProfessionalService entries for this region
+            instance.professionalservice_set.filter(region=region).delete()
+            
+            # Remove availability entries for this region
+            instance.availability_schedule.filter(region=region).delete()
+            
+            # Update user's current region if it was the deleted region
+            if instance.user.current_region == region:
+                remaining_regions = instance.regions.all()
+                if remaining_regions.exists():
+                    instance.user.current_region = remaining_regions.first()
+                    instance.user.save()
+                else:
+                    instance.user.current_region = None
+                    instance.user.save()
+            
+            logger.info(f"Successfully removed professional {instance.id} from region {region.id}")
+            
+        else:
+            # Professional works in only one region - delete completely
+            logger.info(f"Deleting professional {instance.id} completely (works in only {total_regions} region)")
+            
+            # Delete the user (this will cascade to professional and related data)
+            user = instance.user
+            user.delete()
+            
+            logger.info(f"Successfully deleted professional {instance.id} and user {user.id}")
     
     def update(self, request, *args, **kwargs):
         """

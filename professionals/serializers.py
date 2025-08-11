@@ -241,6 +241,8 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
             try:
                 region_id = availability_item.get('region_id')
                 if region_id:
+                    # Import Region here to avoid circular import issues
+                    from regions.models import Region
                     region = Region.objects.get(id=region_id)
                     ProfessionalAvailability.objects.create(
                         professional=professional,
@@ -252,7 +254,11 @@ class ProfessionalRegistrationSerializer(serializers.ModelSerializer):
                         break_end=availability_item.get('break_end'),
                         is_active=availability_item.get('is_active', True)
                     )
-            except (Region.DoesNotExist, KeyError, ValueError):
+            except (Region.DoesNotExist, KeyError, ValueError) as e:
+                # Log the error for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error creating availability for professional {professional.id}: {e}")
                 # Skip invalid availability data
                 continue
         
