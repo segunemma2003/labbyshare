@@ -365,8 +365,9 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         # Handle multipart form data preprocessing
         data = request.data.copy()
         
-        # Handle boolean fields - convert string "true"/"false" to actual booleans
-        boolean_fields = ['user_is_active', 'is_verified', 'is_active']
+        # Handle boolean fields FIRST - convert string "true"/"false" to actual booleans
+        # This must happen before any serializer processing
+        boolean_fields = ['is_verified', 'is_active']
         for field in boolean_fields:
             if field in data:
                 value = data[field]
@@ -404,6 +405,9 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                 else:
                     # Convert to boolean
                     data[field] = bool(value)
+        
+        # Log the processed boolean values for debugging
+        logger.debug(f"🔧 Processed boolean fields: {[(field, data.get(field, 'NOT_FOUND')) for field in boolean_fields]}")
         
         # Special handling for profile_picture
         if 'profile_picture' in request.FILES:
@@ -749,8 +753,9 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             # Handle multipart form data preprocessing
             data = request.data.copy()
             
-            # Handle boolean fields - convert string "true"/"false" to actual booleans
-            boolean_fields = ['user_is_active', 'is_verified', 'is_active']
+            # Handle boolean fields FIRST - convert string "true"/"false" to actual booleans
+            # This must happen before any serializer processing
+            boolean_fields = ['is_verified', 'is_active']
             for field in boolean_fields:
                 if field in data:
                     value = data[field]
@@ -788,6 +793,9 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                     else:
                         # Convert to boolean
                         data[field] = bool(value)
+            
+            # Log the processed boolean values for debugging
+            logger.debug(f"🔧 Processed boolean fields: {[(field, data.get(field, 'NOT_FOUND')) for field in boolean_fields]}")
             
             # Special handling for profile_picture
             if 'profile_picture' in request.FILES:
