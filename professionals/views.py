@@ -19,8 +19,7 @@ from .serializers import (
     ProfessionalListSerializer, ProfessionalDetailSerializer,
     ProfessionalRegistrationSerializer, AvailabilityCreateSerializer,
     UnavailabilitySerializer, ProfessionalDocumentSerializer,
-    AvailabilitySlotSerializer, ProfessionalSearchSerializer,
-    ProfessionalUpdateSerializer, ProfessionalAdminDetailSerializer
+    AvailabilitySlotSerializer, ProfessionalSearchSerializer
 )
 from .filters import ProfessionalFilter
 from utils.permissions import IsVerifiedProfessional, IsOwnerOrReadOnly
@@ -153,12 +152,8 @@ class ProfessionalProfileView(generics.RetrieveUpdateAPIView):
     """
     View and update professional profile
     """
+    serializer_class = ProfessionalDetailSerializer
     permission_classes = [IsVerifiedProfessional, IsOwnerOrReadOnly]
-    
-    def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
-            return ProfessionalUpdateSerializer
-        return ProfessionalDetailSerializer
     
     def get_object(self):
         # Handle schema generation with AnonymousUser
@@ -173,23 +168,6 @@ class ProfessionalProfileView(generics.RetrieveUpdateAPIView):
         context = super().get_serializer_context()
         context['region'] = getattr(self.request, 'region', None)
         return context
-    
-    def update(self, request, *args, **kwargs):
-        """Add debugging to see what's in the request"""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Update method called with request method: {request.method}")
-        logger.debug(f"Request content type: {request.content_type}")
-        logger.debug(f"Request data type: {type(request.data)}")
-        logger.debug(f"Request data keys: {list(request.data.keys()) if hasattr(request.data, 'keys') else 'No keys'}")
-        if 'profile_picture' in request.data:
-            logger.debug(f"profile_picture in request data type: {type(request.data['profile_picture'])}, value: {request.data['profile_picture']}")
-        if hasattr(request, 'FILES') and request.FILES:
-            logger.debug(f"Request FILES keys: {list(request.FILES.keys())}")
-            if 'profile_picture' in request.FILES:
-                logger.debug(f"profile_picture in FILES type: {type(request.FILES['profile_picture'])}")
-        
-        return super().update(request, *args, **kwargs)
 
 
 class AvailabilityManagementView(generics.ListCreateAPIView):
@@ -672,124 +650,3 @@ def professional_dashboard(request):
     }
     
     return Response(stats)
-
-
-class AdminProfessionalDetailView(generics.RetrieveAPIView):
-    """
-    Get comprehensive professional information for admin
-    """
-    serializer_class = ProfessionalAdminDetailSerializer
-    permission_classes = [permissions.IsAdminUser]
-    lookup_field = 'id'
-    
-    @swagger_auto_schema(
-        operation_description="Get comprehensive professional information for admin",
-        responses={200: ProfessionalAdminDetailSerializer()}
-    )
-    def get(self, request, *args, **kwargs):
-        return super().get(request, *args, **kwargs)
-    
-    def get_queryset(self):
-        return Professional.objects.select_related(
-            'user'
-        ).prefetch_related(
-            'regions',
-            'services',
-            'availability_schedule',
-            'documents',
-            'professionalservice_set__service__category',
-            'professionalservice_set__region',
-            'professionalregion_set__region'
-        )
-
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def test_file_upload(request):
-    """Test endpoint to debug file upload issues"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    logger.debug(f"Test file upload called")
-    logger.debug(f"Request method: {request.method}")
-    logger.debug(f"Request content type: {request.content_type}")
-    logger.debug(f"Request data type: {type(request.data)}")
-    logger.debug(f"Request data keys: {list(request.data.keys()) if hasattr(request.data, 'keys') else 'No keys'}")
-    
-    if hasattr(request, 'FILES') and request.FILES:
-        logger.debug(f"Request FILES keys: {list(request.FILES.keys())}")
-        for key, value in request.FILES.items():
-            logger.debug(f"File {key}: type={type(value)}, name={getattr(value, 'name', 'No name')}, size={getattr(value, 'size', 'No size')}")
-    
-    if 'profile_picture' in request.data:
-        logger.debug(f"profile_picture in data: type={type(request.data['profile_picture'])}, value={request.data['profile_picture']}")
-    
-    return Response({
-        'message': 'File upload test completed',
-        'data_keys': list(request.data.keys()) if hasattr(request.data, 'keys') else [],
-        'files_keys': list(request.FILES.keys()) if hasattr(request, 'FILES') else [],
-        'content_type': request.content_type
-    })
-
-
-@api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
-def simple_file_test(request):
-    """Simple test to isolate file upload issues"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    logger.debug("=== SIMPLE FILE TEST ===")
-    logger.debug(f"Request method: {request.method}")
-    logger.debug(f"Request content type: {request.content_type}")
-    logger.debug(f"Request data type: {type(request.data)}")
-    
-    # Check request.data
-    if hasattr(request.data, 'keys'):
-        logger.debug(f"Request data keys: {list(request.data.keys())}")
-        for key, value in request.data.items():
-            logger.debug(f"  {key}: type={type(value)}, value={value}")
-    
-    # Check request.FILES
-    if hasattr(request, 'FILES') and request.FILES:
-        logger.debug(f"Request FILES keys: {list(request.FILES.keys())}")
-        for key, value in request.FILES.items():
-            logger.debug(f"  File {key}: type={type(value)}")
-            if hasattr(value, 'name'):
-                logger.debug(f"    name: {value.name}")
-            if hasattr(value, 'size'):
-                logger.debug(f"    size: {value.size}")
-            if hasattr(value, 'content_type'):
-                logger.debug(f"    content_type: {value.content_type}")
-    else:
-        logger.debug("No FILES in request")
-    
-    # Try to access profile_picture specifically
-    if 'profile_picture' in request.data:
-        profile_pic = request.data['profile_picture']
-        logger.debug(f"profile_picture in data: type={type(profile_pic)}")
-        try:
-            if hasattr(profile_pic, 'name'):
-                logger.debug(f"  name: {profile_pic.name}")
-            else:
-                logger.debug(f"  No name attribute")
-        except Exception as e:
-            logger.error(f"Error accessing profile_picture.name: {e}")
-    
-    if hasattr(request, 'FILES') and 'profile_picture' in request.FILES:
-        profile_pic = request.FILES['profile_picture']
-        logger.debug(f"profile_picture in FILES: type={type(profile_pic)}")
-        try:
-            if hasattr(profile_pic, 'name'):
-                logger.debug(f"  name: {profile_pic.name}")
-            else:
-                logger.debug(f"  No name attribute")
-        except Exception as e:
-            logger.error(f"Error accessing profile_picture.name: {e}")
-    
-    return Response({
-        'message': 'Simple file test completed',
-        'data_keys': list(request.data.keys()) if hasattr(request.data, 'keys') else [],
-        'files_keys': list(request.FILES.keys()) if hasattr(request, 'FILES') else [],
-        'content_type': request.content_type
-    })

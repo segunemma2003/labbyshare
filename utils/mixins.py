@@ -4,6 +4,7 @@ Custom mixins for views
 from rest_framework import status
 from rest_framework.response import Response
 from django.core.cache import cache
+import hashlib
 
 
 class CachedListMixin:
@@ -18,8 +19,15 @@ class CachedListMixin:
         prefix = self.cache_key_prefix or f"{self.__class__.__name__}"
         region = getattr(self.request, 'region', None)
         region_code = region.code if region else 'global'
+        
+        # Get query parameters and create a safe hash
         query_params = self.request.GET.urlencode()
-        return f"{prefix}:{region_code}:{hash(query_params)}"
+        
+        # Use hashlib instead of hash() to avoid unhashable type errors
+        # Create a hash of the query string
+        query_hash = hashlib.md5(query_params.encode('utf-8')).hexdigest()[:8]
+        
+        return f"{prefix}:{region_code}:{query_hash}"
     
     def list(self, request, *args, **kwargs):
         """Override list method to add caching"""

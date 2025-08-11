@@ -551,35 +551,86 @@ def stripe_webhook(request):
     payload = request.body
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
 
-    # Log every incoming webhook attempt (raw, before verification)
+    # Enhanced logging for incoming webhook
+    stripe_webhook_logger.info("=" * 80)
+    stripe_webhook_logger.info("STRIPE WEBHOOK RECEIVED")
+    stripe_webhook_logger.info("=" * 80)
+    stripe_webhook_logger.info(f"Request Method: {request.method}")
+    stripe_webhook_logger.info(f"Content Type: {request.content_type}")
+    stripe_webhook_logger.info(f"Content Length: {len(payload)} bytes")
+    stripe_webhook_logger.info(f"Stripe Signature Header: {sig_header[:50]}..." if sig_header else "MISSING")
+    
+    # Log headers (sanitized)
+    headers = dict(request.headers)
+    if 'authorization' in headers:
+        headers['authorization'] = '***REDACTED***'
+    stripe_webhook_logger.info(f"Request Headers: {headers}")
+    
+    # Log payload (sanitized for sensitive data)
     try:
-        stripe_webhook_logger.info(f"Received webhook: headers={dict(request.headers)}, body={payload.decode('utf-8', errors='replace')}")
+        payload_str = payload.decode('utf-8', errors='replace')
+        # Sanitize sensitive data in payload
+        import json
+        try:
+            payload_json = json.loads(payload_str)
+            if 'data' in payload_json and 'object' in payload_json['data']:
+                obj = payload_json['data']['object']
+                # Redact sensitive fields
+                sensitive_fields = ['client_secret', 'secret', 'key', 'token']
+                for field in sensitive_fields:
+                    if field in obj:
+                        obj[field] = '***REDACTED***'
+                payload_str = json.dumps(payload_json, indent=2)
+        except json.JSONDecodeError:
+            pass
+        stripe_webhook_logger.info(f"Webhook Payload: {payload_str}")
     except Exception as e:
-        logger.error(f"Failed to log incoming webhook: {str(e)}")
+        stripe_webhook_logger.error(f"Failed to decode payload: {str(e)}")
+        stripe_webhook_logger.info(f"Raw payload (hex): {payload.hex()}")
 
     try:
         # Verify webhook signature
+        stripe_webhook_logger.info("Verifying webhook signature...")
         event = stripe.Webhook.construct_event(
             payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
         )
+        stripe_webhook_logger.info(f"✅ Webhook signature verified successfully")
+        stripe_webhook_logger.info(f"Event ID: {event['id']}")
+        stripe_webhook_logger.info(f"Event Type: {event['type']}")
+        stripe_webhook_logger.info(f"Event Created: {event.get('created', 'N/A')}")
         
         # Process the event
+        stripe_webhook_logger.info("Processing webhook event...")
         result = StripePaymentService.handle_webhook_event(event)
         
         if result['success']:
+            stripe_webhook_logger.info(f"✅ Webhook processed successfully: {result.get('message', 'No message')}")
+            stripe_webhook_logger.info("=" * 80)
             return HttpResponse(status=200)
         else:
-            logger.error(f"Webhook processing failed: {result.get('error', 'Unknown error')}")
+            error_msg = result.get('error', 'Unknown error')
+            stripe_webhook_logger.error(f"❌ Webhook processing failed: {error_msg}")
+            logger.error(f"Webhook processing failed: {error_msg}")
+            stripe_webhook_logger.info("=" * 80)
             return HttpResponse(status=500)
             
     except ValueError as e:
+        stripe_webhook_logger.error(f"❌ Invalid webhook payload: {str(e)}")
         logger.error(f"Invalid webhook payload: {str(e)}")
+        stripe_webhook_logger.info("=" * 80)
         return HttpResponse(status=400)
     except stripe.error.SignatureVerificationError as e:
+        stripe_webhook_logger.error(f"❌ Invalid webhook signature: {str(e)}")
         logger.error(f"Invalid webhook signature: {str(e)}")
+        stripe_webhook_logger.info("=" * 80)
         return HttpResponse(status=400)
     except Exception as e:
+        stripe_webhook_logger.error(f"❌ Unexpected webhook processing error: {str(e)}")
+        stripe_webhook_logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        stripe_webhook_logger.error(f"Traceback: {traceback.format_exc()}")
         logger.error(f"Webhook processing error: {str(e)}")
+        stripe_webhook_logger.info("=" * 80)
         return HttpResponse(status=500)
 
 

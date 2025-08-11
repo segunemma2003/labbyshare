@@ -206,60 +206,78 @@ class StripePaymentService:
         Handle successful payment and update booking status
         """
         try:
+            logger.info(f"🎉 Starting payment success processing for intent: {payment_intent_id}")
+            
             # Retrieve the payment intent
+            logger.info(f"📡 Retrieving payment intent from Stripe...")
             payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            logger.info(f"✅ Retrieved payment intent: status={payment_intent.status}, amount={payment_intent.amount}")
             
             # Find the payment record
+            logger.info(f"🔍 Looking for payment record with intent ID: {payment_intent_id}")
             payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
             booking = payment.booking
             
-            logger.info(f"Processing payment success for booking {booking.booking_id}")
-            logger.info(f"Payment type: {payment.payment_type}")
-            logger.info(f"Payment amount: {payment.amount}")
-            logger.info(f"Booking total: {booking.total_amount}")
-            logger.info(f"Current booking payment status: {booking.payment_status}")
+            logger.info(f"📋 Payment details found:")
+            logger.info(f"   - Payment ID: {payment.payment_id}")
+            logger.info(f"   - Booking ID: {booking.booking_id}")
+            logger.info(f"   - Payment type: {payment.payment_type}")
+            logger.info(f"   - Payment amount: {payment.amount}")
+            logger.info(f"   - Booking total: {booking.total_amount}")
+            logger.info(f"   - Current booking payment status: {booking.payment_status}")
+            logger.info(f"   - Stripe amount: {Decimal(payment_intent.amount) / 100}")
             
             # Verify payment amount matches server calculation
             server_amount = Decimal(payment_intent.metadata.get('amount_being_charged', '0'))
             stripe_amount = Decimal(payment_intent.amount) / 100
             
+            logger.info(f"🔍 Amount verification:")
+            logger.info(f"   - Server amount: {server_amount}")
+            logger.info(f"   - Stripe amount: {stripe_amount}")
+            logger.info(f"   - Difference: {abs(server_amount - stripe_amount)}")
+            
             if abs(server_amount - stripe_amount) > Decimal('0.01'):
-                logger.error(f"Payment amount mismatch for {payment_intent_id}: server={server_amount}, stripe={stripe_amount}")
+                logger.error(f"❌ Payment amount mismatch for {payment_intent_id}: server={server_amount}, stripe={stripe_amount}")
                 raise ValueError("Payment amount verification failed")
             
+            logger.info(f"✅ Amount verification passed")
+            
             # Update payment status
+            logger.info(f"💾 Updating payment status to 'completed'...")
             payment.status = 'completed'
             payment.stripe_charge_id = payment_intent.latest_charge
             payment.processed_at = timezone.now()
             payment.save()
+            logger.info(f"✅ Payment status updated successfully")
             
             # Update booking payment status based on payment type
             old_payment_status = booking.payment_status
+            logger.info(f"🔄 Updating booking payment status from '{old_payment_status}'...")
             
             if payment.payment_type == 'full':
                 booking.payment_status = 'fully_paid'
-                logger.info(f"Setting booking {booking.booking_id} to fully_paid (full payment)")
+                logger.info(f"💰 Setting booking {booking.booking_id} to fully_paid (full payment)")
             elif payment.payment_type == 'partial':
                 booking.payment_status = 'deposit_paid'
-                logger.info(f"Setting booking {booking.booking_id} to deposit_paid (partial payment)")
+                logger.info(f"💰 Setting booking {booking.booking_id} to deposit_paid (partial payment)")
             elif payment.payment_type == 'remaining':
                 booking.payment_status = 'fully_paid'
-                logger.info(f"Setting booking {booking.booking_id} to fully_paid (remaining payment)")
+                logger.info(f"💰 Setting booking {booking.booking_id} to fully_paid (remaining payment)")
             else:
-                logger.warning(f"Unknown payment type: {payment.payment_type}")
+                logger.warning(f"⚠️ Unknown payment type: {payment.payment_type}")
                 # Default to fully_paid if amount matches total
                 if abs(payment.amount - booking.total_amount) < Decimal('0.01'):
                     booking.payment_status = 'fully_paid'
-                    logger.info(f"Setting booking {booking.booking_id} to fully_paid (amount matches total)")
+                    logger.info(f"💰 Setting booking {booking.booking_id} to fully_paid (amount matches total)")
                 else:
                     booking.payment_status = 'deposit_paid'
-                    logger.info(f"Setting booking {booking.booking_id} to deposit_paid (amount less than total)")
+                    logger.info(f"💰 Setting booking {booking.booking_id} to deposit_paid (amount less than total)")
             
             booking.save()
-            
-            logger.info(f"Payment status updated: {old_payment_status} -> {booking.payment_status}")
+            logger.info(f"✅ Booking payment status updated: {old_payment_status} -> {booking.payment_status}")
             
             # Send confirmation notifications
+            logger.info(f"📧 Sending payment confirmation notifications...")
             try:
                 from notifications.tasks import send_booking_notification
                 send_booking_notification.delay(
@@ -267,10 +285,11 @@ class StripePaymentService:
                     'payment_confirmed',
                     [booking.customer.id, booking.professional.user.id]
                 )
+                logger.info(f"✅ Payment confirmation notifications sent")
             except Exception as e:
-                logger.error(f"Failed to send payment confirmation notification: {str(e)}")
+                logger.error(f"❌ Failed to send payment confirmation notification: {str(e)}")
             
-            logger.info(f"Payment confirmed for booking {booking.booking_id} - Type: {payment.payment_type}")
+            logger.info(f"🎉 Payment success processing completed for booking {booking.booking_id}")
             return {
                 'success': True,
                 'payment_id': str(payment.payment_id),
@@ -283,10 +302,13 @@ class StripePaymentService:
             }
             
         except Payment.DoesNotExist:
-            logger.error(f"Payment record not found for intent {payment_intent_id}")
+            logger.error(f"❌ Payment record not found for intent {payment_intent_id}")
             return {'success': False, 'error': 'Payment record not found'}
         except Exception as e:
-            logger.error(f"Error handling payment success: {str(e)}")
+            logger.error(f"💥 Error handling payment success: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -301,24 +323,51 @@ class StripePaymentService:
             Dict with failure details
         """
         try:
+            logger.info(f"💥 Starting payment failure processing for intent: {payment_intent_id}")
+            
             # Retrieve the payment intent
+            logger.info(f"📡 Retrieving payment intent from Stripe...")
             payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            logger.info(f"✅ Retrieved payment intent: status={payment_intent.status}")
+            
+            # Get failure details
+            failure_reason = "Payment failed"
+            if payment_intent.last_payment_error:
+                failure_reason = payment_intent.last_payment_error.message
+                logger.info(f"📋 Payment error details: {payment_intent.last_payment_error}")
+            
+            logger.info(f"❌ Payment failure reason: {failure_reason}")
             
             # Find the payment record
+            logger.info(f"🔍 Looking for payment record with intent ID: {payment_intent_id}")
             payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
             booking = payment.booking
             
+            logger.info(f"📋 Payment details found:")
+            logger.info(f"   - Payment ID: {payment.payment_id}")
+            logger.info(f"   - Booking ID: {booking.booking_id}")
+            logger.info(f"   - Payment type: {payment.payment_type}")
+            logger.info(f"   - Payment amount: {payment.amount}")
+            logger.info(f"   - Current payment status: {payment.status}")
+            logger.info(f"   - Current booking payment status: {booking.payment_status}")
+            
             # Update payment status
+            logger.info(f"💾 Updating payment status to 'failed'...")
             payment.status = 'failed'
-            payment.failure_reason = payment_intent.last_payment_error.message if payment_intent.last_payment_error else 'Payment failed'
+            payment.failure_reason = failure_reason
             payment.processed_at = timezone.now()
             payment.save()
+            logger.info(f"✅ Payment status updated to 'failed'")
             
             # Update booking payment status
+            logger.info(f"🔄 Updating booking payment status to 'failed'...")
+            old_booking_payment_status = booking.payment_status
             booking.payment_status = 'failed'
             booking.save()
+            logger.info(f"✅ Booking payment status updated: {old_booking_payment_status} -> {booking.payment_status}")
             
             # Send failure notification
+            logger.info(f"📧 Sending payment failure notification...")
             try:
                 from notifications.tasks import send_booking_notification
                 send_booking_notification.delay(
@@ -326,22 +375,26 @@ class StripePaymentService:
                     'payment_failed',
                     [booking.customer.id]
                 )
+                logger.info(f"✅ Payment failure notification sent")
             except Exception as e:
-                logger.error(f"Failed to send payment failure notification: {str(e)}")
+                logger.error(f"❌ Failed to send payment failure notification: {str(e)}")
             
-            logger.warning(f"Payment failed for booking {booking.booking_id}: {payment.failure_reason}")
+            logger.warning(f"💥 Payment failed for booking {booking.booking_id}: {failure_reason}")
             return {
                 'success': False,
-                'error': payment.failure_reason,
+                'error': failure_reason,
                 'payment_id': payment.id,
                 'booking_id': str(booking.booking_id)
             }
             
         except Payment.DoesNotExist:
-            logger.error(f"Payment record not found for intent {payment_intent_id}")
+            logger.error(f"❌ Payment record not found for intent {payment_intent_id}")
             return {'success': False, 'error': 'Payment record not found'}
         except Exception as e:
-            logger.error(f"Error handling payment failure: {str(e)}")
+            logger.error(f"💥 Error handling payment failure: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -512,6 +565,8 @@ class StripePaymentService:
             event_id = event_data['id']
             event_type = event_data['type']
             
+            logger.info(f"🔍 Processing webhook event: {event_id} ({event_type})")
+            
             # Check if we've already processed this event
             webhook_event, created = PaymentWebhookEvent.objects.get_or_create(
                 stripe_event_id=event_id,
@@ -522,32 +577,53 @@ class StripePaymentService:
             )
             
             if not created and webhook_event.processed:
+                logger.info(f"⏭️ Event {event_id} already processed, skipping")
                 return {'success': True, 'message': 'Event already processed'}
+            
+            if created:
+                logger.info(f"📝 Created new webhook event record for {event_id}")
+            else:
+                logger.info(f"📝 Found existing webhook event record for {event_id} (not processed)")
             
             # Process different event types
             result = {'success': True, 'message': 'Event processed'}
             
+            logger.info(f"🔄 Processing event type: {event_type}")
+            
             if event_type == 'payment_intent.succeeded':
-                result = StripePaymentService.handle_payment_success(event_data['data']['object']['id'])
+                payment_intent_id = event_data['data']['object']['id']
+                logger.info(f"💰 Processing payment success for intent: {payment_intent_id}")
+                result = StripePaymentService.handle_payment_success(payment_intent_id)
             elif event_type == 'payment_intent.payment_failed':
-                result = StripePaymentService.handle_payment_failure(event_data['data']['object']['id'])
+                payment_intent_id = event_data['data']['object']['id']
+                logger.info(f"❌ Processing payment failure for intent: {payment_intent_id}")
+                result = StripePaymentService.handle_payment_failure(payment_intent_id)
             elif event_type == 'charge.dispute.created':
+                logger.info(f"⚠️ Processing payment dispute")
                 result = StripePaymentService._handle_dispute_created(event_data)
             else:
-                logger.info(f"Unhandled webhook event type: {event_type}")
+                logger.info(f"ℹ️ Unhandled webhook event type: {event_type}")
                 result = {'success': True, 'message': 'Event type not handled'}
             
             # Mark as processed
             webhook_event.processed = True
             webhook_event.save()
+            logger.info(f"✅ Marked webhook event {event_id} as processed")
             
+            logger.info(f"🎯 Webhook processing result: {result}")
             return result
             
         except Exception as e:
-            logger.error(f"Webhook processing error: {str(e)}")
+            logger.error(f"💥 Webhook processing error for event {event_data.get('id', 'unknown')}: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
             if 'webhook_event' in locals():
                 webhook_event.processing_error = str(e)
                 webhook_event.save()
+                logger.info(f"💾 Saved error to webhook event record")
+            
             return {'success': False, 'error': str(e)}
     
     @staticmethod

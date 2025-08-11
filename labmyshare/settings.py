@@ -80,6 +80,7 @@ LOCAL_APPS = [
     'admin_panel',
     'health',
     'analytics',
+    'core',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -416,6 +417,11 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
+        'stripe_webhook': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'notifications': {
             'handlers': ['console'],
             'level': 'DEBUG',
@@ -466,7 +472,7 @@ if IS_PRODUCTION and not os.getenv('CI') and not os.getenv('GITHUB_ACTIONS'):
     })
     
     # Update loggers to use file handlers in production
-    for logger_name in ['django', 'accounts', 'payments', 'notifications']:
+    for logger_name in ['django', 'accounts', 'payments', 'notifications', 'stripe_webhook']:
         LOGGING['loggers'][logger_name]['handlers'] = ['console', 'file', 'error_file']
 
 # Performance Settings
