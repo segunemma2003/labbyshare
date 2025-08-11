@@ -40,9 +40,15 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
         
         logger = logging.getLogger(__name__)
         logger.debug(f"ProfessionalAvailabilityDataSerializer.to_internal_value called with: {data}")
+        logger.debug(f"Data type: {type(data)}")
+        
+        # Handle case where data might be a string or other type
+        if not isinstance(data, dict):
+            logger.error(f"Expected dict, got {type(data)}: {data}")
+            raise serializers.ValidationError(f"Expected dictionary data, got {type(data)}")
         
         # Create a copy to avoid modifying original data
-        processed_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        processed_data = data.copy()
         
         def parse_time_field(time_str, field_name):
             """Parse time string and return time object or None"""
@@ -297,7 +303,7 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         """
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data keys: {list(data.keys())}")
+        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called data keys: {list(data.keys())}")
         
         # Handle the availability data separately to avoid conflicts
         availability_data = data.get('availability', [])
@@ -489,14 +495,26 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         import logging
         logger = logging.getLogger(__name__)
         logger.debug(f"AdminProfessionalUpdateSerializer.to_internal_value called")
+        logger.debug(f"Raw data keys: {list(data.keys())}")
         
         # Handle the availability data separately to avoid conflicts
         availability_data = data.get('availability', [])
         if availability_data:
             logger.debug(f"Processing {len(availability_data)} availability items for update")
+            logger.debug(f"Availability data type: {type(availability_data)}")
+            logger.debug(f"Availability data: {availability_data}")
+            
             processed_availability = []
             for i, item in enumerate(availability_data):
                 try:
+                    logger.debug(f"Processing availability item {i}: {item}")
+                    logger.debug(f"Item type: {type(item)}")
+                    
+                    # Ensure item is a dictionary
+                    if not isinstance(item, dict):
+                        logger.error(f"Availability item {i} is not a dict: {type(item)}")
+                        raise serializers.ValidationError({f'availability[{i}]': f"Expected dictionary, got {type(item)}"})
+                    
                     # Create a new serializer instance for each availability item
                     availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
                     if availability_serializer.is_valid():
@@ -505,6 +523,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                     else:
                         logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
                         raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
+                except serializers.ValidationError:
+                    # Re-raise validation errors
+                    raise
                 except Exception as e:
                     logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
                     raise serializers.ValidationError({f'availability[{i}]': str(e)})
