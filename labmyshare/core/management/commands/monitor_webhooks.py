@@ -267,3 +267,4 @@ class Command(BaseCommand):
         self.stdout.write(f"Success rate: {(processed_events/total_events*100):.1f}%" if total_events > 0 else "No events")
         
         self.stdout.write(self.style.SUCCESS("\n✅ Webhook monitoring completed!")) 
+ 

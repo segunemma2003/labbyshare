@@ -59,7 +59,6 @@ class RegionFilterMixin:
             queryset = queryset.filter(region=region)
         
         return queryset
-
         queryset = super().get_queryset()
         region = getattr(self.request, 'region', None)
         
@@ -67,3 +66,4 @@ class RegionFilterMixin:
             queryset = queryset.filter(region=region)
         
         return queryset
+

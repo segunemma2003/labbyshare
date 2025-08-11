@@ -25,10 +25,10 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
     """
     region_id = serializers.IntegerField()
     weekday = serializers.IntegerField(min_value=0, max_value=6)  # 0=Monday, 6=Sunday
-    start_time = serializers.TimeField()
-    end_time = serializers.TimeField()
-    break_start = serializers.TimeField(required=False, allow_null=True)
-    break_end = serializers.TimeField(required=False, allow_null=True)
+    start_time = serializers.CharField()  # Changed to CharField to handle string input
+    end_time = serializers.CharField()    # Changed to CharField to handle string input
+    break_start = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    break_end = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     is_active = serializers.BooleanField(default=True)
 
     def to_internal_value(self, data):
@@ -51,6 +51,7 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
                 
             if isinstance(time_str, time):
                 # Already a time object
+                logger.debug(f"  ✅ {field_name} already a time object: {time_str}")
                 return time_str
             
             if not isinstance(time_str, str):
@@ -60,7 +61,7 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
             if not time_str:
                 return None
             
-            logger.debug(f"Parsing {field_name}: '{time_str}'")
+            logger.debug(f"Parsing {field_name}: '{time_str}' (type: {type(time_str)})")
             
             # Try different time formats
             for fmt in ['%H:%M:%S', '%H:%M', '%I:%M %p', '%I:%M:%S %p']:
@@ -278,7 +279,7 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'first_name', 'last_name', 'email', 'password', 'phone_number', 
+            'first_name', 'last_name', 'email', 'password', 'phone_number',
             'gender', 'date_of_birth', 'profile_picture',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
@@ -436,8 +437,8 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         allow_empty=False
     )
     
-    # Availability data
-    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    # Availability data - handled by view, not serializer
+    # availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
     
     class Meta:
         model = Professional
@@ -446,7 +447,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'date_of_birth', 'profile_picture', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
-            'regions', 'services', 'availability'
+            'regions', 'services'
         ]
     
     def validate_regions(self, value):
@@ -489,29 +490,9 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         logger = logging.getLogger(__name__)
         logger.debug(f"AdminProfessionalUpdateSerializer.to_internal_value called")
         
-        # Handle the availability data separately to avoid conflicts
-        availability_data = data.get('availability', [])
-        if availability_data:
-            logger.debug(f"Processing {len(availability_data)} availability items for update")
-            processed_availability = []
-            for i, item in enumerate(availability_data):
-                try:
-                    # Create a new serializer instance for each availability item
-                    availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
-                    if availability_serializer.is_valid():
-                        processed_availability.append(availability_serializer.validated_data)
-                        logger.debug(f"  ✅ Availability item {i} validated successfully")
-                    else:
-                        logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
-                        raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
-                except Exception as e:
-                    logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
-                    raise serializers.ValidationError({f'availability[{i}]': str(e)})
-            
-            # Replace the availability data with processed data
-            data = data.copy()
-            data['availability'] = processed_availability
-            logger.debug(f"Processed all availability items successfully for update")
+        # Skip availability processing in serializer - let the view handle it
+        # The view already processes the multipart form data format
+        logger.debug(f"Skipping availability processing in serializer - handled by view")
         
         return super().to_internal_value(data)
     
@@ -551,12 +532,12 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                 logger.debug(f"Updating user fields: {user_fields}")
                 for field, value in user_fields.items():
                     setattr(instance.user, field, value)
-                instance.user.save()
-            
+            instance.user.save()
+        
             # Extract relationship fields
             regions = validated_data.pop('regions', None)
             services = validated_data.pop('services', None)
-            availability_data = validated_data.pop('availability', None)
+            # Availability is handled by the view, not the serializer
             
             # Update professional fields
             for field, value in validated_data.items():
@@ -601,33 +582,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                         )
                 instance.services.set(services)
             
-            # Handle availability updates
-            if availability_data is not None:
-                logger.debug(f"Updating availability: {len(availability_data)} items")
-                # Clear existing availability
-                instance.availability_schedule.all().delete()
-                
-                # Create new availability entries
-                for availability_item in availability_data:
-                    try:
-                        region = Region.objects.get(id=availability_item['region_id'])
-                        ProfessionalAvailability.objects.create(
-                            professional=instance,
-                            region=region,
-                            weekday=availability_item['weekday'],
-                            start_time=availability_item['start_time'],
-                            end_time=availability_item['end_time'],
-                            break_start=availability_item.get('break_start'),
-                            break_end=availability_item.get('break_end'),
-                            is_active=availability_item.get('is_active', True)
-                        )
-                        logger.debug(f"Created availability for region {region.id}, weekday {availability_item['weekday']}")
-                    except Region.DoesNotExist:
-                        logger.warning(f"Region {availability_item['region_id']} not found, skipping availability")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error creating availability: {str(e)}")
-                        continue
+            # Availability updates are handled by the view
             
             logger.info(f"✅ Successfully updated professional {instance.id}")
             return instance
@@ -1208,5 +1163,6 @@ class SupportTicketSerializer(serializers.ModelSerializer):
             'category', 'priority', 'status', 'assigned_to', 'assigned_to_name',
             'related_booking', 'created_at', 'updated_at', 'resolved_at'
         ]
+
 
 
