@@ -391,11 +391,16 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
             if services_data:
                 if not isinstance(services_data, (list, tuple)):
                     services_data = [services_data]
-                # Convert string IDs to integers
+                # Convert string IDs to integers and get the actual Service objects
                 try:
-                    services_data = [int(sid) for sid in services_data if sid]
-                    data['services'] = services_data
-                    logger.debug(f"Processed services: {services_data}")
+                    from services.models import Service
+                    service_ids = [int(sid) for sid in services_data if sid]
+                    services_objects = Service.objects.filter(id__in=service_ids, is_active=True)
+                    if len(services_objects) != len(service_ids):
+                        missing_ids = set(service_ids) - set(services_objects.values_list('id', flat=True))
+                        logger.warning(f"Some service IDs not found: {missing_ids}")
+                    data['services'] = list(services_objects)
+                    logger.debug(f"Processed services: {[s.id for s in services_objects]}")
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error processing services: {e}")
                     return Response({
@@ -409,11 +414,16 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
             if regions_data:
                 if not isinstance(regions_data, (list, tuple)):
                     regions_data = [regions_data]
-                # Convert string IDs to integers
+                # Convert string IDs to integers and get the actual Region objects
                 try:
-                    regions_data = [int(rid) for rid in regions_data if rid]
-                    data['regions'] = regions_data
-                    logger.debug(f"Processed regions: {regions_data}")
+                    from regions.models import Region
+                    region_ids = [int(rid) for rid in regions_data if rid]
+                    regions_objects = Region.objects.filter(id__in=region_ids, is_active=True)
+                    if len(regions_objects) != len(region_ids):
+                        missing_ids = set(region_ids) - set(regions_objects.values_list('id', flat=True))
+                        logger.warning(f"Some region IDs not found: {missing_ids}")
+                    data['regions'] = list(regions_objects)
+                    logger.debug(f"Processed regions: {[r.id for r in regions_objects]}")
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error processing regions: {e}")
                     return Response({
@@ -497,7 +507,11 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                 }
                 
                 # Validate that required fields are present
-                if availability_item['start_time'] and availability_item['end_time']:
+                if (availability_item['region_id'] is not None and 
+                    availability_item['weekday'] is not None and
+                    availability_item['start_time'] and 
+                    availability_item['end_time']):
+                    
                     # Validate that end_time is after start_time
                     if availability_item['end_time'] <= availability_item['start_time']:
                         logger.error(f"End time must be after start time for availability item {i}")
@@ -509,8 +523,17 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                     availability_data.append(availability_item)
                     logger.debug(f"Added availability item {i}: {availability_item}")
                 else:
-                    logger.warning(f"Skipping availability item {i} - missing time data")
-                
+                    logger.warning(f"Skipping availability item {i} - missing required data: region_id={availability_item['region_id']}, weekday={availability_item['weekday']}, start_time={availability_item['start_time']}, end_time={availability_item['end_time']}")
+                    return Response({
+                        'error': f'Missing required fields for availability item {i}',
+                        'details': {
+                            'region_id': 'This field is required.' if availability_item['region_id'] is None else None,
+                            'weekday': 'This field is required.' if availability_item['weekday'] is None else None,
+                            'start_time': 'This field is required.' if not availability_item['start_time'] else None,
+                            'end_time': 'This field is required.' if not availability_item['end_time'] else None,
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
             except (ValueError, TypeError) as e:
                 logger.error(f"Error processing availability item {i}: {e}")
                 return Response({
@@ -712,11 +735,16 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                 if services_data:
                     if not isinstance(services_data, (list, tuple)):
                         services_data = [services_data]
-                    # Convert string IDs to integers
+                    # Convert string IDs to integers and get the actual Service objects
                     try:
-                        services_data = [int(sid) for sid in services_data if sid]
-                        data['services'] = services_data
-                        logger.debug(f"Processed services: {services_data}")
+                        from services.models import Service
+                        service_ids = [int(sid) for sid in services_data if sid]
+                        services_objects = Service.objects.filter(id__in=service_ids, is_active=True)
+                        if len(services_objects) != len(service_ids):
+                            missing_ids = set(service_ids) - set(services_objects.values_list('id', flat=True))
+                            logger.warning(f"Some service IDs not found: {missing_ids}")
+                        data['services'] = list(services_objects)
+                        logger.debug(f"Processed services: {[s.id for s in services_objects]}")
                     except (ValueError, TypeError) as e:
                         logger.error(f"Error processing services: {e}")
                         return Response({
@@ -730,11 +758,16 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                 if regions_data:
                     if not isinstance(regions_data, (list, tuple)):
                         regions_data = [regions_data]
-                    # Convert string IDs to integers
+                    # Convert string IDs to integers and get the actual Region objects
                     try:
-                        regions_data = [int(rid) for rid in regions_data if rid]
-                        data['regions'] = regions_data
-                        logger.debug(f"Processed regions: {regions_data}")
+                        from regions.models import Region
+                        region_ids = [int(rid) for rid in regions_data if rid]
+                        regions_objects = Region.objects.filter(id__in=region_ids, is_active=True)
+                        if len(regions_objects) != len(region_ids):
+                            missing_ids = set(region_ids) - set(regions_objects.values_list('id', flat=True))
+                            logger.warning(f"Some region IDs not found: {missing_ids}")
+                        data['regions'] = list(regions_objects)
+                        logger.debug(f"Processed regions: {[r.id for r in regions_objects]}")
                     except (ValueError, TypeError) as e:
                         logger.error(f"Error processing regions: {e}")
                         return Response({
