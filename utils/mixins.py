@@ -59,3 +59,11 @@ class RegionFilterMixin:
             queryset = queryset.filter(region=region)
         
         return queryset
+
+        queryset = super().get_queryset()
+        region = getattr(self.request, 'region', None)
+        
+        if region and hasattr(queryset.model, 'region'):
+            queryset = queryset.filter(region=region)
+        
+        return queryset

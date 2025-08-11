@@ -537,18 +537,86 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             i = 0
             while f'availability[{i}][region_id]' in data:
                 try:
+                    # Get the raw time values
+                    start_time_str = data.get(f'availability[{i}][start_time]')
+                    end_time_str = data.get(f'availability[{i}][end_time]')
+                    break_start_str = data.get(f'availability[{i}][break_start]')
+                    break_end_str = data.get(f'availability[{i}][break_end]')
+                    
+                    # Convert time strings to time objects
+                    from datetime import datetime
+                    
+                    start_time = None
+                    end_time = None
+                    break_start = None
+                    break_end = None
+                    
+                    if start_time_str:
+                        try:
+                            start_time = datetime.strptime(start_time_str, '%H:%M:%S').time()
+                        except ValueError:
+                            try:
+                                start_time = datetime.strptime(start_time_str, '%H:%M').time()
+                            except ValueError:
+                                logger.error(f"Invalid start_time format: {start_time_str}")
+                                return Response({
+                                    'error': f'Invalid start_time format for availability item {i}',
+                                    'details': f'Expected HH:MM:SS or HH:MM, got: {start_time_str}'
+                                }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    if end_time_str:
+                        try:
+                            end_time = datetime.strptime(end_time_str, '%H:%M:%S').time()
+                        except ValueError:
+                            try:
+                                end_time = datetime.strptime(end_time_str, '%H:%M').time()
+                            except ValueError:
+                                logger.error(f"Invalid end_time format: {end_time_str}")
+                                return Response({
+                                    'error': f'Invalid end_time format for availability item {i}',
+                                    'details': f'Expected HH:MM:SS or HH:MM, got: {end_time_str}'
+                                }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    if break_start_str:
+                        try:
+                            break_start = datetime.strptime(break_start_str, '%H:%M:%S').time()
+                        except ValueError:
+                            try:
+                                break_start = datetime.strptime(break_start_str, '%H:%M').time()
+                            except ValueError:
+                                logger.warning(f"Invalid break_start format: {break_start_str}, setting to None")
+                                break_start = None
+                    
+                    if break_end_str:
+                        try:
+                            break_end = datetime.strptime(break_end_str, '%H:%M:%S').time()
+                        except ValueError:
+                            try:
+                                break_end = datetime.strptime(break_end_str, '%H:%M').time()
+                            except ValueError:
+                                logger.warning(f"Invalid break_end format: {break_end_str}, setting to None")
+                                break_end = None
+                    
                     availability_item = {
                         'region_id': int(data.get(f'availability[{i}][region_id]')),
                         'weekday': int(data.get(f'availability[{i}][weekday]')),
-                        'start_time': data.get(f'availability[{i}][start_time]'),
-                        'end_time': data.get(f'availability[{i}][end_time]'),
-                        'break_start': data.get(f'availability[{i}][break_start]') or None,
-                        'break_end': data.get(f'availability[{i}][break_end]') or None,
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'break_start': break_start,
+                        'break_end': break_end,
                         'is_active': data.get(f'availability[{i}][is_active]', 'true').lower() == 'true'
                     }
                     
                     # Validate that required fields are present
                     if availability_item['start_time'] and availability_item['end_time']:
+                        # Validate that end_time is after start_time
+                        if availability_item['end_time'] <= availability_item['start_time']:
+                            logger.error(f"End time must be after start time for availability item {i}")
+                            return Response({
+                                'error': f'End time must be after start time for availability item {i}',
+                                'details': f'Start: {start_time_str}, End: {end_time_str}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        
                         availability_data.append(availability_item)
                         logger.debug(f"Added availability item {i}: {availability_item}")
                     else:
