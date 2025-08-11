@@ -371,9 +371,39 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
             if field in data:
                 value = data[field]
                 if isinstance(value, str):
-                    data[field] = value.lower() == 'true'
+                    # Handle various string formats
+                    clean_value = value.strip().lower()
+                    if clean_value in ['true', '1', 'yes', 'on']:
+                        data[field] = True
+                    elif clean_value in ['false', '0', 'no', 'off']:
+                        data[field] = False
+                    else:
+                        # Try to evaluate string representations like "[True]"
+                        try:
+                            import ast
+                            evaluated = ast.literal_eval(value)
+                            if isinstance(evaluated, bool):
+                                data[field] = evaluated
+                            elif isinstance(evaluated, (list, tuple)) and len(evaluated) == 1:
+                                data[field] = bool(evaluated[0])
+                            else:
+                                data[field] = bool(evaluated)
+                        except (ValueError, SyntaxError):
+                            # If all else fails, default to False
+                            data[field] = False
                 elif isinstance(value, (list, tuple)) and len(value) == 1:
-                    data[field] = value[0].lower() == 'true'
+                    # Handle list/tuple with single value
+                    single_value = value[0]
+                    if isinstance(single_value, str):
+                        data[field] = single_value.lower() in ['true', '1', 'yes', 'on']
+                    else:
+                        data[field] = bool(single_value)
+                elif isinstance(value, bool):
+                    # Already a boolean, keep as is
+                    data[field] = value
+                else:
+                    # Convert to boolean
+                    data[field] = bool(value)
         
         # Special handling for profile_picture
         if 'profile_picture' in request.FILES:
@@ -725,9 +755,39 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                 if field in data:
                     value = data[field]
                     if isinstance(value, str):
-                        data[field] = value.lower() == 'true'
+                        # Handle various string formats
+                        clean_value = value.strip().lower()
+                        if clean_value in ['true', '1', 'yes', 'on']:
+                            data[field] = True
+                        elif clean_value in ['false', '0', 'no', 'off']:
+                            data[field] = False
+                        else:
+                            # Try to evaluate string representations like "[True]"
+                            try:
+                                import ast
+                                evaluated = ast.literal_eval(value)
+                                if isinstance(evaluated, bool):
+                                    data[field] = evaluated
+                                elif isinstance(evaluated, (list, tuple)) and len(evaluated) == 1:
+                                    data[field] = bool(evaluated[0])
+                                else:
+                                    data[field] = bool(evaluated)
+                            except (ValueError, SyntaxError):
+                                # If all else fails, default to False
+                                data[field] = False
                     elif isinstance(value, (list, tuple)) and len(value) == 1:
-                        data[field] = value[0].lower() == 'true'
+                        # Handle list/tuple with single value
+                        single_value = value[0]
+                        if isinstance(single_value, str):
+                            data[field] = single_value.lower() in ['true', '1', 'yes', 'on']
+                        else:
+                            data[field] = bool(single_value)
+                    elif isinstance(value, bool):
+                        # Already a boolean, keep as is
+                        data[field] = value
+                    else:
+                        # Convert to boolean
+                        data[field] = bool(value)
             
             # Special handling for profile_picture
             if 'profile_picture' in request.FILES:
