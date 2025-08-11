@@ -365,6 +365,16 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         # Handle multipart form data preprocessing
         data = request.data.copy()
         
+        # Handle boolean fields - convert string "true"/"false" to actual booleans
+        boolean_fields = ['user_is_active', 'is_verified', 'is_active']
+        for field in boolean_fields:
+            if field in data:
+                value = data[field]
+                if isinstance(value, str):
+                    data[field] = value.lower() == 'true'
+                elif isinstance(value, (list, tuple)) and len(value) == 1:
+                    data[field] = value[0].lower() == 'true'
+        
         # Special handling for profile_picture
         if 'profile_picture' in request.FILES:
             profile_picture = request.FILES['profile_picture']
@@ -709,6 +719,16 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             # Handle multipart form data preprocessing
             data = request.data.copy()
             
+            # Handle boolean fields - convert string "true"/"false" to actual booleans
+            boolean_fields = ['user_is_active', 'is_verified', 'is_active']
+            for field in boolean_fields:
+                if field in data:
+                    value = data[field]
+                    if isinstance(value, str):
+                        data[field] = value.lower() == 'true'
+                    elif isinstance(value, (list, tuple)) and len(value) == 1:
+                        data[field] = value[0].lower() == 'true'
+            
             # Special handling for profile_picture
             if 'profile_picture' in request.FILES:
                 profile_picture = request.FILES['profile_picture']
@@ -851,7 +871,11 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                     }
                     
                     # Validate that required fields are present
-                    if availability_item['start_time'] and availability_item['end_time']:
+                    if (availability_item['region_id'] is not None and 
+                        availability_item['weekday'] is not None and
+                        availability_item['start_time'] and 
+                        availability_item['end_time']):
+                        
                         # Validate that end_time is after start_time
                         if availability_item['end_time'] <= availability_item['start_time']:
                             logger.error(f"End time must be after start time for availability item {i}")
@@ -863,8 +887,17 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                         availability_data.append(availability_item)
                         logger.debug(f"Added availability item {i}: {availability_item}")
                     else:
-                        logger.warning(f"Skipping availability item {i} - missing time data")
-                    
+                        logger.warning(f"Skipping availability item {i} - missing required data: region_id={availability_item['region_id']}, weekday={availability_item['weekday']}, start_time={availability_item['start_time']}, end_time={availability_item['end_time']}")
+                        return Response({
+                            'error': f'Missing required fields for availability item {i}',
+                            'details': {
+                                'region_id': 'This field is required.' if availability_item['region_id'] is None else None,
+                                'weekday': 'This field is required.' if availability_item['weekday'] is None else None,
+                                'start_time': 'This field is required.' if not availability_item['start_time'] else None,
+                                'end_time': 'This field is required.' if not availability_item['end_time'] else None,
+                            }
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error processing availability item {i}: {e}")
                     return Response({
@@ -878,43 +911,59 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                 data['availability'] = availability_data
                 logger.debug(f"Processed {len(availability_data)} availability items")
             
-            # Create serializer with processed data
-            serializer = self.get_serializer(instance, data=data, partial=True)
-            
-            if serializer.is_valid():
-                # Perform the update
-                updated_instance = serializer.save()
+            # Continue with serializer processing
+            try:
+                logger.debug(f"🔍 About to create serializer with data: {data}")
+                logger.debug(f"🔍 Data keys: {list(data.keys())}")
+                if 'availability' in data:
+                    logger.debug(f"🔍 Availability data type: {type(data['availability'])}")
+                    logger.debug(f"🔍 Availability data: {data['availability']}")
                 
-                # Return the updated instance data
-                response_serializer = AdminProfessionalDetailSerializer(updated_instance, context={'request': request})
+                serializer = self.get_serializer(instance, data=data, partial=True)
                 
-                # Log the successful update
-                AdminActivity.objects.create(
-                    admin_user=request.user,
-                    activity_type='professional_verification',
-                    description=f"Updated professional: {updated_instance.user.email}",
-                    target_model='Professional',
-                    target_id=str(updated_instance.id)
-                )
+                logger.debug(f"🔍 Serializer created, checking validity...")
+                is_valid = serializer.is_valid()
+                logger.debug(f"🔍 Serializer is_valid: {is_valid}")
                 
-                logger.info(f"Successfully updated professional {updated_instance.id}")
-                return Response(response_serializer.data, status=status.HTTP_200_OK)
-            else:
-                logger.error(f"Serializer validation errors: {serializer.errors}")
+                if not is_valid:
+                    logger.error(f"❌ Serializer validation errors: {serializer.errors}")
+                    return Response({
+                        'error': 'Failed to update professional. Please check the logs for details.',
+                        'details': serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                logger.debug(f"🔍 Serializer is valid, performing update...")
+                self.perform_update(serializer)
+                
+                # Get updated instance
+                professional = serializer.instance
+                detail_serializer = AdminProfessionalDetailSerializer(professional)
+                
+                logger.info(f"✅ Successfully updated professional {professional.id}")
+                return Response(detail_serializer.data, status=status.HTTP_200_OK)
+                
+            except serializers.ValidationError as e:
+                logger.error(f"❌ Serializer validation error: {e.detail}")
                 return Response({
-                    'error': 'Validation failed',
-                    'details': serializer.errors
+                    'error': 'Failed to update professional. Please check the logs for details.',
+                    'details': e.detail
                 }, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                logger.error(f"💥 Unexpected error during update: {str(e)}")
+                logger.error(f"Error type: {type(e).__name__}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return Response({
+                    'error': 'Failed to update professional. Please check the logs for details.',
+                    'details': str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
         except Exception as e:
-            logger.error(f"Error updating professional {kwargs.get('pk')}: {str(e)}")
-            logger.error(f"Request data: {request.data}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            
+            logger.error(f"💥 Unexpected error in update method: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({
                 'error': 'Failed to update professional. Please check the logs for details.',
-                'details': str(e),
-                'type': type(e).__name__
+                'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # ===================== CATEGORY MANAGEMENT =====================
