@@ -356,19 +356,229 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         responses={201: AdminProfessionalDetailSerializer()}
     )
     def post(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        if response.status_code == 201:
-            professional = Professional.objects.get(id=response.data['id'])
-            detail_data = AdminProfessionalDetailSerializer(professional).data
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"Creating professional with data keys: {list(request.data.keys())}")
+        logger.debug(f"Request files keys: {list(request.FILES.keys())}")
+        
+        # Handle multipart form data preprocessing
+        data = request.data.copy()
+        
+        # Special handling for profile_picture
+        if 'profile_picture' in request.FILES:
+            profile_picture = request.FILES['profile_picture']
+            logger.debug(f"Profile picture from FILES: {type(profile_picture)} - {profile_picture}")
+            data['profile_picture'] = profile_picture
+        elif 'profile_picture' in request.data:
+            # Handle case where profile_picture is in data but not FILES
+            pp_value = request.data['profile_picture']
+            logger.debug(f"Profile picture from data: {type(pp_value)} - {pp_value}")
+            if isinstance(pp_value, (list, tuple)):
+                if len(pp_value) == 1:
+                    data['profile_picture'] = pp_value[0]
+                elif len(pp_value) == 0:
+                    data['profile_picture'] = None
+                else:
+                    logger.error(f"Multiple profile pictures detected: {len(pp_value)}")
+                    # Let the serializer handle this error
+            elif isinstance(pp_value, str) and pp_value.strip() == "":
+                data['profile_picture'] = None
+        
+        # Handle services field - they might come as multiple values
+        if 'services' in data:
+            services_data = data.getlist('services') if hasattr(data, 'getlist') else data.get('services')
+            if services_data:
+                if not isinstance(services_data, (list, tuple)):
+                    services_data = [services_data]
+                # Convert string IDs to integers
+                try:
+                    services_data = [int(sid) for sid in services_data if sid]
+                    data['services'] = services_data
+                    logger.debug(f"Processed services: {services_data}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing services: {e}")
+                    return Response({
+                        'error': 'Invalid service IDs provided',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Handle regions field - similar to services
+        if 'regions' in data:
+            regions_data = data.getlist('regions') if hasattr(data, 'getlist') else data.get('regions')
+            if regions_data:
+                if not isinstance(regions_data, (list, tuple)):
+                    regions_data = [regions_data]
+                # Convert string IDs to integers
+                try:
+                    regions_data = [int(rid) for rid in regions_data if rid]
+                    data['regions'] = regions_data
+                    logger.debug(f"Processed regions: {regions_data}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing regions: {e}")
+                    return Response({
+                        'error': 'Invalid region IDs provided',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Handle availability data
+        availability_data = []
+        i = 0
+        while f'availability[{i}][region_id]' in data:
+            try:
+                # Get the raw time values
+                start_time_str = data.get(f'availability[{i}][start_time]')
+                end_time_str = data.get(f'availability[{i}][end_time]')
+                break_start_str = data.get(f'availability[{i}][break_start]')
+                break_end_str = data.get(f'availability[{i}][break_end]')
+                
+                # Convert time strings to time objects
+                from datetime import datetime
+                
+                start_time = None
+                end_time = None
+                break_start = None
+                break_end = None
+                
+                if start_time_str:
+                    try:
+                        start_time = datetime.strptime(start_time_str, '%H:%M:%S').time()
+                    except ValueError:
+                        try:
+                            start_time = datetime.strptime(start_time_str, '%H:%M').time()
+                        except ValueError:
+                            logger.error(f"Invalid start_time format: {start_time_str}")
+                            return Response({
+                                'error': f'Invalid start_time format for availability item {i}',
+                                'details': f'Expected HH:MM:SS or HH:MM, got: {start_time_str}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                
+                if end_time_str:
+                    try:
+                        end_time = datetime.strptime(end_time_str, '%H:%M:%S').time()
+                    except ValueError:
+                        try:
+                            end_time = datetime.strptime(end_time_str, '%H:%M').time()
+                        except ValueError:
+                            logger.error(f"Invalid end_time format: {end_time_str}")
+                            return Response({
+                                'error': f'Invalid end_time format for availability item {i}',
+                                'details': f'Expected HH:MM:SS or HH:MM, got: {end_time_str}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                
+                if break_start_str:
+                    try:
+                        break_start = datetime.strptime(break_start_str, '%H:%M:%S').time()
+                    except ValueError:
+                        try:
+                            break_start = datetime.strptime(break_start_str, '%H:%M').time()
+                        except ValueError:
+                            logger.warning(f"Invalid break_start format: {break_start_str}, setting to None")
+                            break_start = None
+                
+                if break_end_str:
+                    try:
+                        break_end = datetime.strptime(break_end_str, '%H:%M:%S').time()
+                    except ValueError:
+                        try:
+                            break_end = datetime.strptime(break_end_str, '%H:%M').time()
+                        except ValueError:
+                            logger.warning(f"Invalid break_end format: {break_end_str}, setting to None")
+                            break_end = None
+                
+                availability_item = {
+                    'region_id': int(data.get(f'availability[{i}][region_id]')),
+                    'weekday': int(data.get(f'availability[{i}][weekday]')),
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'break_start': break_start,
+                    'break_end': break_end,
+                    'is_active': data.get(f'availability[{i}][is_active]', 'true').lower() == 'true'
+                }
+                
+                # Validate that required fields are present
+                if availability_item['start_time'] and availability_item['end_time']:
+                    # Validate that end_time is after start_time
+                    if availability_item['end_time'] <= availability_item['start_time']:
+                        logger.error(f"End time must be after start time for availability item {i}")
+                        return Response({
+                            'error': f'End time must be after start time for availability item {i}',
+                            'details': f'Start: {start_time_str}, End: {end_time_str}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    availability_data.append(availability_item)
+                    logger.debug(f"Added availability item {i}: {availability_item}")
+                else:
+                    logger.warning(f"Skipping availability item {i} - missing time data")
+                
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error processing availability item {i}: {e}")
+                return Response({
+                    'error': f'Invalid availability data for item {i}',
+                    'details': str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            i += 1
+        
+        if availability_data:
+            data['availability'] = availability_data
+            logger.debug(f"Processed {len(availability_data)} availability items")
+        
+        # Continue with serializer processing
+        try:
+            logger.debug(f"🔍 About to create serializer with data: {data}")
+            logger.debug(f"🔍 Data keys: {list(data.keys())}")
+            if 'availability' in data:
+                logger.debug(f"🔍 Availability data type: {type(data['availability'])}")
+                logger.debug(f"🔍 Availability data: {data['availability']}")
+            
+            serializer = self.get_serializer(data=data)
+            
+            logger.debug(f"🔍 Serializer created, checking validity...")
+            is_valid = serializer.is_valid()
+            logger.debug(f"🔍 Serializer is_valid: {is_valid}")
+            
+            if not is_valid:
+                logger.error(f"❌ Serializer validation errors: {serializer.errors}")
+                return Response({
+                    'error': 'Failed to create professional',
+                    'details': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.debug(f"🔍 Serializer is valid, performing create...")
+            self.perform_create(serializer)
+            
+            # Get created instance
+            professional = serializer.instance
+            detail_serializer = AdminProfessionalDetailSerializer(professional)
+            
+            # Create admin activity log
             AdminActivity.objects.create(
                 admin_user=request.user,
                 activity_type='professional_verification',
-                description=f"Created professional: {request.data['email']}",
+                description=f"Created professional: {data.get('email', 'Unknown')}",
                 target_model='Professional',
                 target_id=str(professional.id)
             )
-            return Response(detail_data, status=201)
-        return response
+            
+            logger.info(f"✅ Successfully created professional {professional.id}")
+            return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except serializers.ValidationError as e:
+            logger.error(f"❌ Serializer validation error: {e.detail}")
+            return Response({
+                'error': 'Failed to create professional',
+                'details': e.detail
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"💥 Unexpected error during creation: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({
+                'error': 'Failed to create professional',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
