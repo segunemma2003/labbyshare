@@ -303,31 +303,11 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         """
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called data keys: {list(data.keys())}")
+        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data keys: {list(data.keys())}")
         
-        # Handle the availability data separately to avoid conflicts
-        availability_data = data.get('availability', [])
-        if availability_data:
-            logger.debug(f"Processing {len(availability_data)} availability items")
-            processed_availability = []
-            for i, item in enumerate(availability_data):
-                try:
-                    # Create a new serializer instance for each availability item
-                    availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
-                    if availability_serializer.is_valid():
-                        processed_availability.append(availability_serializer.validated_data)
-                        logger.debug(f"  ✅ Availability item {i} validated successfully")
-                    else:
-                        logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
-                        raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
-                except Exception as e:
-                    logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
-                    raise serializers.ValidationError({f'availability[{i}]': str(e)})
-            
-            # Replace the availability data with processed data
-            data = data.copy()
-            data['availability'] = processed_availability
-            logger.debug(f"Processed all availability items successfully")
+        # Let the serializer handle availability data naturally
+        # The view should convert multipart form data to proper structure
+        logger.debug(f"Processing data with availability: {data.get('availability', [])}")
         
         return super().to_internal_value(data)
     

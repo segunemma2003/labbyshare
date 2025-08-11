@@ -516,10 +516,12 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         if availability_data:
             data['availability'] = availability_data
             logger.debug(f"Converted {len(availability_data)} availability items for serializer")
+            logger.debug(f"Final availability data structure: {availability_data}")
         
         # Continue with serializer processing
         try:
             logger.debug(f"🔍 About to create serializer with data keys: {list(data.keys())}")
+            logger.debug(f"🔍 Full data structure: {data}")
             
             serializer = self.get_serializer(data=data)
             
