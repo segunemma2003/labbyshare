@@ -437,8 +437,8 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         allow_empty=False
     )
     
-    # Availability data - handled by view, not serializer
-    # availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    # Availability data
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
     
     class Meta:
         model = Professional
@@ -447,7 +447,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             'date_of_birth', 'profile_picture', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
-            'regions', 'services'
+            'regions', 'services', 'availability'
         ]
     
     def validate_regions(self, value):
@@ -490,9 +490,29 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
         logger = logging.getLogger(__name__)
         logger.debug(f"AdminProfessionalUpdateSerializer.to_internal_value called")
         
-        # Skip availability processing in serializer - let the view handle it
-        # The view already processes the multipart form data format
-        logger.debug(f"Skipping availability processing in serializer - handled by view")
+        # Handle the availability data separately to avoid conflicts
+        availability_data = data.get('availability', [])
+        if availability_data:
+            logger.debug(f"Processing {len(availability_data)} availability items for update")
+            processed_availability = []
+            for i, item in enumerate(availability_data):
+                try:
+                    # Create a new serializer instance for each availability item
+                    availability_serializer = ProfessionalAvailabilityDataSerializer(data=item)
+                    if availability_serializer.is_valid():
+                        processed_availability.append(availability_serializer.validated_data)
+                        logger.debug(f"  ✅ Availability item {i} validated successfully")
+                    else:
+                        logger.error(f"  ❌ Availability item {i} validation failed: {availability_serializer.errors}")
+                        raise serializers.ValidationError({f'availability[{i}]': availability_serializer.errors})
+                except Exception as e:
+                    logger.error(f"  💥 Error processing availability item {i}: {str(e)}")
+                    raise serializers.ValidationError({f'availability[{i}]': str(e)})
+            
+            # Replace the availability data with processed data
+            data = data.copy()
+            data['availability'] = processed_availability
+            logger.debug(f"Processed all availability items successfully for update")
         
         return super().to_internal_value(data)
     
@@ -537,7 +557,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             # Extract relationship fields
             regions = validated_data.pop('regions', None)
             services = validated_data.pop('services', None)
-            # Availability is handled by the view, not the serializer
+            availability_data = validated_data.pop('availability', None)
             
             # Update professional fields
             for field, value in validated_data.items():
@@ -582,7 +602,33 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
                         )
                 instance.services.set(services)
             
-            # Availability updates are handled by the view
+            # Handle availability updates
+            if availability_data is not None:
+                logger.debug(f"Updating availability: {len(availability_data)} items")
+                # Clear existing availability
+                instance.availability_schedule.all().delete()
+                
+                # Create new availability entries
+                for availability_item in availability_data:
+                    try:
+                        region = Region.objects.get(id=availability_item['region_id'])
+                        ProfessionalAvailability.objects.create(
+                            professional=instance,
+                            region=region,
+                            weekday=availability_item['weekday'],
+                            start_time=availability_item['start_time'],
+                            end_time=availability_item['end_time'],
+                            break_start=availability_item.get('break_start'),
+                            break_end=availability_item.get('break_end'),
+                            is_active=availability_item.get('is_active', True)
+                        )
+                        logger.debug(f"Created availability for region {region.id}, weekday {availability_item['weekday']}")
+                    except Region.DoesNotExist:
+                        logger.warning(f"Region {availability_item['region_id']} not found, skipping availability")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error creating availability: {str(e)}")
+                        continue
             
             logger.info(f"✅ Successfully updated professional {instance.id}")
             return instance
@@ -1163,6 +1209,8 @@ class SupportTicketSerializer(serializers.ModelSerializer):
             'category', 'priority', 'status', 'assigned_to', 'assigned_to_name',
             'related_booking', 'created_at', 'updated_at', 'resolved_at'
         ]
+
+
 
 
 
