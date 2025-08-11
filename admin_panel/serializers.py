@@ -21,7 +21,7 @@ from bookings.serializers import (
 
 class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
     """
-    Serializer for professional availability data in admin operations
+    Serializer for professional availability data in admin operations - FIXED VERSION
     """
     region_id = serializers.IntegerField()
     weekday = serializers.IntegerField(min_value=0, max_value=6)  # 0=Monday, 6=Sunday
@@ -32,19 +32,56 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
     is_active = serializers.BooleanField(default=True)
 
     def validate(self, attrs):
+        """Enhanced validation with better error messages"""
         # Validate that end_time is after start_time
-        if attrs['end_time'] <= attrs['start_time']:
-            raise serializers.ValidationError("End time must be after start time")
+        start_time = attrs.get('start_time')
+        end_time = attrs.get('end_time')
+        
+        if not start_time or not end_time:
+            raise serializers.ValidationError("Both start_time and end_time are required")
+        
+        if end_time <= start_time:
+            raise serializers.ValidationError({
+                'end_time': f"End time ({end_time}) must be after start time ({start_time})"
+            })
         
         # Validate break times if provided
-        if attrs.get('break_start') and attrs.get('break_end'):
-            if attrs['break_end'] <= attrs['break_start']:
-                raise serializers.ValidationError("Break end time must be after break start time")
+        break_start = attrs.get('break_start')
+        break_end = attrs.get('break_end')
+        
+        if break_start and break_end:
+            if break_end <= break_start:
+                raise serializers.ValidationError({
+                    'break_end': f"Break end time ({break_end}) must be after break start time ({break_start})"
+                })
             
             # Validate break is within working hours
-            if (attrs['break_start'] < attrs['start_time'] or 
-                attrs['break_end'] > attrs['end_time']):
-                raise serializers.ValidationError("Break time must be within working hours")
+            if break_start < start_time:
+                raise serializers.ValidationError({
+                    'break_start': f"Break start time ({break_start}) cannot be before work start time ({start_time})"
+                })
+            
+            if break_end > end_time:
+                raise serializers.ValidationError({
+                    'break_end': f"Break end time ({break_end}) cannot be after work end time ({end_time})"
+                })
+        elif break_start and not break_end:
+            raise serializers.ValidationError({
+                'break_end': "Break end time is required when break start time is provided"
+            })
+        elif break_end and not break_start:
+            raise serializers.ValidationError({
+                'break_start': "Break start time is required when break end time is provided"
+            })
+        
+        # Validate region exists
+        region_id = attrs.get('region_id')
+        if region_id:
+            from regions.models import Region
+            if not Region.objects.filter(id=region_id, is_active=True).exists():
+                raise serializers.ValidationError({
+                    'region_id': f"Region with ID {region_id} does not exist or is not active"
+                })
         
         return attrs
 
@@ -240,19 +277,29 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
 
 class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     """
-    Update professional by admin
+    Update professional by admin - FIXED VERSION
     """
-    # User fields
-    first_name = serializers.CharField(source='user.first_name')
-    last_name = serializers.CharField(source='user.last_name')
-    email = serializers.EmailField(source='user.email')
-    phone_number = serializers.CharField(source='user.phone_number', required=False)
-    gender = serializers.ChoiceField(choices=User.GENDER_CHOICES, source='user.gender', required=False)
-    date_of_birth = serializers.DateField(source='user.date_of_birth', required=False)
-    profile_picture = serializers.ImageField(source='user.profile_picture', required=False, allow_null=True)
-    user_is_active = serializers.BooleanField(source='user.is_active')
-    regions = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True), many=True)
-    services = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True), many=True)
+    # User fields - removed source mapping to handle manually
+    first_name = serializers.CharField(required=False)
+    last_name = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.ChoiceField(choices=User.GENDER_CHOICES, required=False, allow_blank=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
+    user_is_active = serializers.BooleanField(required=False)
+    
+    # Professional fields with proper handling
+    regions = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=False
+    )
+    services = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=False
+    )
     
     # Availability data
     availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
@@ -260,120 +307,161 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Professional
         fields = [
-            'first_name', 'last_name', 'email', 'phone_number', 'gender', 'date_of_birth', 'profile_picture', 'user_is_active',
+            'first_name', 'last_name', 'email', 'phone_number', 'gender', 
+            'date_of_birth', 'profile_picture', 'user_is_active',
             'bio', 'experience_years', 'is_verified', 'is_active',
             'travel_radius_km', 'min_booking_notice_hours', 'commission_rate',
             'regions', 'services', 'availability'
         ]
     
-    def to_internal_value(self, data):
-        # Remove user fields from data before processing to avoid assignment error
-        user_fields = ['first_name', 'last_name', 'email', 'phone_number', 'gender', 'date_of_birth', 'profile_picture', 'user_is_active']
-        internal_data = data.copy()
+    def validate_regions(self, value):
+        """Validate that all region IDs exist and are active"""
+        if not value:
+            return value
         
-        # Store user data separately
-        self.user_data = {}
-        for field in user_fields:
-            if field in internal_data:
-                self.user_data[field] = internal_data.pop(field)
+        from regions.models import Region
+        valid_regions = Region.objects.filter(id__in=value, is_active=True)
+        valid_ids = set(valid_regions.values_list('id', flat=True))
+        provided_ids = set(value)
         
-        return super().to_internal_value(internal_data)
+        if provided_ids != valid_ids:
+            missing_ids = provided_ids - valid_ids
+            raise serializers.ValidationError(f"Invalid region IDs: {list(missing_ids)}")
+        
+        return list(valid_regions)
+    
+    def validate_services(self, value):
+        """Validate that all service IDs exist and are active"""
+        if not value:
+            return value
+        
+        from services.models import Service
+        valid_services = Service.objects.filter(id__in=value, is_active=True)
+        valid_ids = set(valid_services.values_list('id', flat=True))
+        provided_ids = set(value)
+        
+        if provided_ids != valid_ids:
+            missing_ids = provided_ids - valid_ids
+            raise serializers.ValidationError(f"Invalid service IDs: {list(missing_ids)}")
+        
+        return list(valid_services)
+    
+    def validate_email(self, value):
+        """Validate email uniqueness"""
+        if value and self.instance:
+            existing_user = User.objects.filter(email=value).exclude(id=self.instance.user.id).first()
+            if existing_user:
+                raise serializers.ValidationError("A user with this email already exists.")
+        return value
     
     def update(self, instance, validated_data):
-        # Handle user fields using the data stored in to_internal_value
-        if hasattr(self, 'user_data') and self.user_data:
-            # Map serializer field names to user model field names
-            field_mapping = {
-                'first_name': 'first_name',
-                'last_name': 'last_name',
-                'email': 'email', 
-                'phone_number': 'phone_number',
-                'gender': 'gender',
-                'date_of_birth': 'date_of_birth',
-                'profile_picture': 'profile_picture',
-                'user_is_active': 'is_active'
-            }
+        """
+        Custom update method to handle user and professional fields separately
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Extract user fields
+            user_fields = {}
+            user_field_names = [
+                'first_name', 'last_name', 'email', 'phone_number', 
+                'gender', 'date_of_birth', 'profile_picture', 'user_is_active'
+            ]
             
-            for serializer_field, user_field in field_mapping.items():
-                if serializer_field in self.user_data:
-                    setattr(instance.user, user_field, self.user_data[serializer_field])
-            instance.user.save()
-        
-        # Extract other fields
-        regions = validated_data.pop('regions', None)
-        services = validated_data.pop('services', None)
-        availability_data = validated_data.pop('availability', None)
-        
-        # Update professional fields (excluding user fields)
-        for field, value in validated_data.items():
-            setattr(instance, field, value)
-        instance.save()
-        
-        # Handle regions and services updates
-        if regions is not None:
-            instance.regions.set(regions)
+            for field_name in user_field_names:
+                if field_name in validated_data:
+                    value = validated_data.pop(field_name)
+                    if field_name == 'user_is_active':
+                        user_fields['is_active'] = value
+                    else:
+                        user_fields[field_name] = value
             
-            # Update ProfessionalService entries if services are also provided
-            if services is not None:
-                # Clear existing ProfessionalService entries
-                instance.professionalservice_set.all().delete()
+            # Update user fields if any provided
+            if user_fields:
+                logger.debug(f"Updating user fields: {user_fields}")
+                for field, value in user_fields.items():
+                    setattr(instance.user, field, value)
+                instance.user.save()
+            
+            # Extract relationship fields
+            regions = validated_data.pop('regions', None)
+            services = validated_data.pop('services', None)
+            availability_data = validated_data.pop('availability', None)
+            
+            # Update professional fields
+            for field, value in validated_data.items():
+                setattr(instance, field, value)
+            instance.save()
+            
+            # Handle regions and services updates
+            if regions is not None:
+                logger.debug(f"Updating regions: {[r.id for r in regions]}")
+                instance.regions.set(regions)
                 
-                # Create new ProfessionalService entries for each region-service combination
+                # Get services for ProfessionalService updates
+                if services is not None:
+                    current_services = services
+                else:
+                    current_services = list(instance.services.all())
+                
+                # Update ProfessionalService entries
+                instance.professionalservice_set.all().delete()
                 for region in regions:
+                    for service in current_services:
+                        ProfessionalService.objects.create(
+                            professional=instance,
+                            service=service,
+                            region=region
+                        )
+                
+                if services is not None:
+                    instance.services.set(services)
+            
+            elif services is not None:
+                logger.debug(f"Updating services: {[s.id for s in services]}")
+                # Only services changed, update ProfessionalService entries for existing regions
+                existing_regions = list(instance.regions.all())
+                instance.professionalservice_set.all().delete()
+                for region in existing_regions:
                     for service in services:
                         ProfessionalService.objects.create(
                             professional=instance,
                             service=service,
                             region=region
                         )
-            else:
-                # If only regions changed, update ProfessionalService entries for existing services
-                existing_services = instance.services.all()
-                instance.professionalservice_set.all().delete()
-                for region in regions:
-                    for service in existing_services:
-                        ProfessionalService.objects.create(
-                            professional=instance,
-                            service=service,
-                            region=region
-                        )
-        elif services is not None:
-            # Only services changed, update ProfessionalService entries for existing regions
-            existing_regions = instance.regions.all()
-            instance.professionalservice_set.all().delete()
-            for region in existing_regions:
-                for service in services:
-                    ProfessionalService.objects.create(
-                        professional=instance,
-                        service=service,
-                        region=region
-                    )
-            instance.services.set(services)
-        
-        # Handle availability updates
-        if availability_data is not None:
-            # Clear existing availability for this professional
-            instance.availability_schedule.all().delete()
+                instance.services.set(services)
             
-            # Create new availability entries
-            for availability_item in availability_data:
-                try:
-                    region = Region.objects.get(id=availability_item['region_id'])
-                    ProfessionalAvailability.objects.create(
-                        professional=instance,
-                        region=region,
-                        weekday=availability_item['weekday'],
-                        start_time=availability_item['start_time'],
-                        end_time=availability_item['end_time'],
-                        break_start=availability_item.get('break_start'),
-                        break_end=availability_item.get('break_end'),
-                        is_active=availability_item.get('is_active', True)
-                    )
-                except Region.DoesNotExist:
-                    # Skip if region doesn't exist
-                    continue
-        
-        return instance
+            # Handle availability updates
+            if availability_data is not None:
+                logger.debug(f"Updating availability: {len(availability_data)} items")
+                # Clear existing availability
+                instance.availability_schedule.all().delete()
+                
+                # Create new availability entries
+                for availability_item in availability_data:
+                    try:
+                        region = Region.objects.get(id=availability_item['region_id'])
+                        ProfessionalAvailability.objects.create(
+                            professional=instance,
+                            region=region,
+                            weekday=availability_item['weekday'],
+                            start_time=availability_item['start_time'],
+                            end_time=availability_item['end_time'],
+                            break_start=availability_item.get('break_start'),
+                            break_end=availability_item.get('break_end'),
+                            is_active=availability_item.get('is_active', True)
+                        )
+                    except Region.DoesNotExist:
+                        logger.warning(f"Region {availability_item['region_id']} not found, skipping availability")
+                        continue
+            
+            logger.info(f"Successfully updated professional {instance.id}")
+            return instance
+            
+        except Exception as e:
+            logger.error(f"Error updating professional {instance.id}: {str(e)}")
+            raise serializers.ValidationError(f"Failed to update professional: {str(e)}")
 
 
 # ===================== CATEGORY MANAGEMENT SERIALIZERS =====================
@@ -947,3 +1035,4 @@ class SupportTicketSerializer(serializers.ModelSerializer):
             'category', 'priority', 'status', 'assigned_to', 'assigned_to_name',
             'related_booking', 'created_at', 'updated_at', 'resolved_at'
         ]
+

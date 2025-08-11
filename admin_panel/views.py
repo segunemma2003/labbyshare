@@ -356,8 +356,26 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         responses={201: AdminProfessionalDetailSerializer()}
     )
     def post(self, request, *args, **kwargs):
-        import logging
         logger = logging.getLogger(__name__)
+        
+        # 🔍 COMPREHENSIVE REQUEST LOGGING
+        logger.info("=" * 80)
+        logger.info("🔍 PROFESSIONAL CREATE REQUEST DEBUG")
+        logger.info("=" * 80)
+        
+        # Log all request data
+        logger.info(f"📋 Request method: {request.method}")
+        logger.info(f"📋 Content type: {request.content_type}")
+        logger.info(f"📋 Request data keys: {list(request.data.keys())}")
+        logger.info(f"📋 Request FILES keys: {list(request.FILES.keys())}")
+        
+        # Log each field with its type and value
+        for key, value in request.data.items():
+            logger.info(f"📋 Field '{key}': type={type(value)}, value='{value}'")
+        
+        # Log files
+        for key, value in request.FILES.items():
+            logger.info(f"📋 File '{key}': type={type(value)}, name='{value.name}'")
         
         logger.debug(f"Creating professional with data keys: {list(request.data.keys())}")
         logger.debug(f"Request files keys: {list(request.FILES.keys())}")
@@ -365,48 +383,83 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         # Handle multipart form data preprocessing
         data = request.data.copy()
         
+        # 🔍 LOG BEFORE BOOLEAN PROCESSING
+        logger.info("🔧 BEFORE BOOLEAN PROCESSING:")
+        for field in ['is_verified', 'is_active']:
+            if field in data:
+                logger.info(f"  {field}: type={type(data[field])}, value='{data[field]}'")
+            else:
+                logger.info(f"  {field}: NOT FOUND")
+        
         # Handle boolean fields FIRST - convert string "true"/"false" to actual booleans
         # This must happen before any serializer processing
         boolean_fields = ['is_verified', 'is_active']
         for field in boolean_fields:
             if field in data:
                 value = data[field]
+                logger.info(f"🔧 Processing boolean field '{field}': type={type(value)}, value='{value}'")
+                
                 if isinstance(value, str):
                     # Handle various string formats
                     clean_value = value.strip().lower()
+                    logger.info(f"  🔧 String value: '{value}' -> clean: '{clean_value}'")
+                    
                     if clean_value in ['true', '1', 'yes', 'on']:
                         data[field] = True
+                        logger.info(f"  ✅ Converted to True")
                     elif clean_value in ['false', '0', 'no', 'off']:
                         data[field] = False
+                        logger.info(f"  ✅ Converted to False")
                     else:
                         # Try to evaluate string representations like "[True]"
+                        logger.info(f"  🔧 Attempting ast.literal_eval for '{value}'")
                         try:
                             import ast
                             evaluated = ast.literal_eval(value)
+                            logger.info(f"  🔧 ast.literal_eval result: {evaluated} (type: {type(evaluated)})")
+                            
                             if isinstance(evaluated, bool):
                                 data[field] = evaluated
+                                logger.info(f"  ✅ Converted to {evaluated}")
                             elif isinstance(evaluated, (list, tuple)) and len(evaluated) == 1:
                                 data[field] = bool(evaluated[0])
+                                logger.info(f"  ✅ Converted list/tuple to {data[field]}")
                             else:
                                 data[field] = bool(evaluated)
-                        except (ValueError, SyntaxError):
+                                logger.info(f"  ✅ Converted other type to {data[field]}")
+                        except (ValueError, SyntaxError) as e:
                             # If all else fails, default to False
                             data[field] = False
+                            logger.warning(f"  ⚠️ ast.literal_eval failed: {e}, defaulting to False")
                 elif isinstance(value, (list, tuple)) and len(value) == 1:
                     # Handle list/tuple with single value
                     single_value = value[0]
+                    logger.info(f"  🔧 List/tuple value: {value} -> single: {single_value}")
                     if isinstance(single_value, str):
                         data[field] = single_value.lower() in ['true', '1', 'yes', 'on']
+                        logger.info(f"  ✅ Converted list string to {data[field]}")
                     else:
                         data[field] = bool(single_value)
+                        logger.info(f"  ✅ Converted list non-string to {data[field]}")
                 elif isinstance(value, bool):
                     # Already a boolean, keep as is
                     data[field] = value
+                    logger.info(f"  ✅ Already boolean: {value}")
                 else:
                     # Convert to boolean
                     data[field] = bool(value)
+                    logger.info(f"  ✅ Converted other type to {data[field]}")
+            else:
+                logger.info(f"🔧 Field '{field}' not found in data")
         
         # Log the processed boolean values for debugging
+        logger.info("🔧 AFTER BOOLEAN PROCESSING:")
+        for field in boolean_fields:
+            if field in data:
+                logger.info(f"  {field}: type={type(data[field])}, value={data[field]}")
+            else:
+                logger.info(f"  {field}: NOT FOUND")
+        
         logger.debug(f"🔧 Processed boolean fields: {[(field, data.get(field, 'NOT_FOUND')) for field in boolean_fields]}")
         
         # Special handling for profile_picture
@@ -593,6 +646,24 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         
         # Continue with serializer processing
         try:
+            # 🔍 LOG FINAL DATA BEING PASSED TO SERIALIZER (CREATE)
+            logger.info("=" * 80)
+            logger.info("🔍 FINAL DATA BEING PASSED TO SERIALIZER (CREATE)")
+            logger.info("=" * 80)
+            logger.info(f"📋 Final data keys: {list(data.keys())}")
+            
+            # Log each field with its type and value
+            for key, value in data.items():
+                logger.info(f"📋 Final field '{key}': type={type(value)}, value='{value}'")
+            
+            # Special logging for boolean fields
+            logger.info("🔧 FINAL BOOLEAN FIELD STATUS:")
+            for field in ['is_verified', 'is_active']:
+                if field in data:
+                    logger.info(f"  {field}: type={type(data[field])}, value={data[field]}")
+                else:
+                    logger.info(f"  {field}: NOT FOUND")
+            
             logger.debug(f"🔍 About to create serializer with data: {data}")
             logger.debug(f"🔍 Data keys: {list(data.keys())}")
             if 'availability' in data:
@@ -754,219 +825,192 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             data = request.data.copy()
             
             # Handle boolean fields FIRST - convert string "true"/"false" to actual booleans
-            # This must happen before any serializer processing
-            boolean_fields = ['is_verified', 'is_active']
+            boolean_fields = ['is_verified', 'is_active', 'user_is_active']
             for field in boolean_fields:
                 if field in data:
                     value = data[field]
+                    logger.debug(f"Processing boolean field {field}: {value} (type: {type(value)})")
+                    
+                    # Handle list format like ['true']
+                    if isinstance(value, (list, tuple)):
+                        if len(value) == 1:
+                            value = value[0]
+                        elif len(value) == 0:
+                            data[field] = False
+                            continue
+                        else:
+                            logger.warning(f"Multiple values for boolean field {field}: {value}")
+                            value = value[0]  # Take first value
+                    
+                    # Now handle the actual value
                     if isinstance(value, str):
-                        # Handle various string formats
                         clean_value = value.strip().lower()
                         if clean_value in ['true', '1', 'yes', 'on']:
                             data[field] = True
-                        elif clean_value in ['false', '0', 'no', 'off']:
+                        elif clean_value in ['false', '0', 'no', 'off', '']:
                             data[field] = False
                         else:
-                            # Try to evaluate string representations like "[True]"
+                            # Try to evaluate string representations
                             try:
                                 import ast
                                 evaluated = ast.literal_eval(value)
-                                if isinstance(evaluated, bool):
-                                    data[field] = evaluated
-                                elif isinstance(evaluated, (list, tuple)) and len(evaluated) == 1:
-                                    data[field] = bool(evaluated[0])
-                                else:
-                                    data[field] = bool(evaluated)
+                                data[field] = bool(evaluated)
                             except (ValueError, SyntaxError):
-                                # If all else fails, default to False
                                 data[field] = False
-                    elif isinstance(value, (list, tuple)) and len(value) == 1:
-                        # Handle list/tuple with single value
-                        single_value = value[0]
-                        if isinstance(single_value, str):
-                            data[field] = single_value.lower() in ['true', '1', 'yes', 'on']
-                        else:
-                            data[field] = bool(single_value)
                     elif isinstance(value, bool):
-                        # Already a boolean, keep as is
                         data[field] = value
                     else:
-                        # Convert to boolean
                         data[field] = bool(value)
+                    
+                    logger.debug(f"✅ Converted {field}: {data[field]} (type: {type(data[field])})")
             
-            # Log the processed boolean values for debugging
-            logger.debug(f"🔧 Processed boolean fields: {[(field, data.get(field, 'NOT_FOUND')) for field in boolean_fields]}")
+            # Handle numeric fields
+            numeric_fields = ['experience_years', 'travel_radius_km', 'min_booking_notice_hours', 'commission_rate']
+            for field in numeric_fields:
+                if field in data:
+                    value = data[field]
+                    if isinstance(value, (list, tuple)) and len(value) == 1:
+                        value = value[0]
+                    
+                    if isinstance(value, str):
+                        try:
+                            if field == 'commission_rate':
+                                data[field] = float(value)
+                            else:
+                                data[field] = int(value)
+                        except ValueError:
+                            logger.warning(f"Invalid numeric value for {field}: {value}")
             
-            # Special handling for profile_picture
+            # Handle profile_picture
             if 'profile_picture' in request.FILES:
-                profile_picture = request.FILES['profile_picture']
-                logger.debug(f"Profile picture from FILES: {type(profile_picture)} - {profile_picture}")
-                data['profile_picture'] = profile_picture
-            elif 'profile_picture' in request.data:
-                # Handle case where profile_picture is in data but not FILES
-                pp_value = request.data['profile_picture']
-                logger.debug(f"Profile picture from data: {type(pp_value)} - {pp_value}")
+                data['profile_picture'] = request.FILES['profile_picture']
+            elif 'profile_picture' in data:
+                pp_value = data['profile_picture']
                 if isinstance(pp_value, (list, tuple)):
                     if len(pp_value) == 1:
                         data['profile_picture'] = pp_value[0]
                     elif len(pp_value) == 0:
                         data['profile_picture'] = None
-                    else:
-                        logger.error(f"Multiple profile pictures detected: {len(pp_value)}")
-                        # Let the serializer handle this error
                 elif isinstance(pp_value, str) and pp_value.strip() == "":
                     data['profile_picture'] = None
             
-            # Handle services field - they might come as multiple values
-            if 'services' in data:
-                services_data = data.getlist('services') if hasattr(data, 'getlist') else data.get('services')
-                if services_data:
-                    if not isinstance(services_data, (list, tuple)):
-                        services_data = [services_data]
-                    # Convert string IDs to integers and get the actual Service objects
-                    try:
-                        from services.models import Service
-                        service_ids = [int(sid) for sid in services_data if sid]
-                        services_objects = Service.objects.filter(id__in=service_ids, is_active=True)
-                        if len(services_objects) != len(service_ids):
-                            missing_ids = set(service_ids) - set(services_objects.values_list('id', flat=True))
-                            logger.warning(f"Some service IDs not found: {missing_ids}")
-                        data['services'] = list(services_objects)
-                        logger.debug(f"Processed services: {[s.id for s in services_objects]}")
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Error processing services: {e}")
-                        return Response({
-                            'error': 'Invalid service IDs provided',
-                            'details': str(e)
-                        }, status=status.HTTP_400_BAD_REQUEST)
+            # Handle services and regions - convert to proper format
+            for field_name in ['services', 'regions']:
+                if field_name in data:
+                    field_data = data.getlist(field_name) if hasattr(data, 'getlist') else data.get(field_name)
+                    
+                    # Handle the case where it comes as 'services[]' or 'regions[]'
+                    array_key = f'{field_name}[]'
+                    if array_key in data:
+                        field_data = data.getlist(array_key) if hasattr(data, 'getlist') else data.get(array_key)
+                    
+                    if field_data:
+                        if not isinstance(field_data, (list, tuple)):
+                            field_data = [field_data]
+                        
+                        try:
+                            if field_name == 'services':
+                                from services.models import Service
+                                service_ids = [int(sid) for sid in field_data if sid]
+                                objects = Service.objects.filter(id__in=service_ids, is_active=True)
+                            else:  # regions
+                                from regions.models import Region
+                                region_ids = [int(rid) for rid in field_data if rid]
+                                objects = Region.objects.filter(id__in=region_ids, is_active=True)
+                            
+                            data[field_name] = list(objects)
+                            logger.debug(f"Processed {field_name}: {[obj.id for obj in objects]}")
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"Error processing {field_name}: {e}")
+                            return Response({
+                                'error': f'Invalid {field_name[:-1]} IDs provided',
+                                'details': str(e)
+                            }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Handle regions field - similar to services
-            if 'regions' in data:
-                regions_data = data.getlist('regions') if hasattr(data, 'getlist') else data.get('regions')
-                if regions_data:
-                    if not isinstance(regions_data, (list, tuple)):
-                        regions_data = [regions_data]
-                    # Convert string IDs to integers and get the actual Region objects
-                    try:
-                        from regions.models import Region
-                        region_ids = [int(rid) for rid in regions_data if rid]
-                        regions_objects = Region.objects.filter(id__in=region_ids, is_active=True)
-                        if len(regions_objects) != len(region_ids):
-                            missing_ids = set(region_ids) - set(regions_objects.values_list('id', flat=True))
-                            logger.warning(f"Some region IDs not found: {missing_ids}")
-                        data['regions'] = list(regions_objects)
-                        logger.debug(f"Processed regions: {[r.id for r in regions_objects]}")
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Error processing regions: {e}")
-                        return Response({
-                            'error': 'Invalid region IDs provided',
-                            'details': str(e)
-                        }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Handle availability data
+            # Handle availability data with better error handling
             availability_data = []
             i = 0
+            
             while f'availability[{i}][region_id]' in data:
                 try:
-                    # Get the raw time values
-                    start_time_str = data.get(f'availability[{i}][start_time]')
-                    end_time_str = data.get(f'availability[{i}][end_time]')
-                    break_start_str = data.get(f'availability[{i}][break_start]')
-                    break_end_str = data.get(f'availability[{i}][break_end]')
+                    # Extract all fields for this availability item
+                    availability_fields = {}
+                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                    optional_fields = ['break_start', 'break_end', 'is_active']
                     
-                    # Convert time strings to time objects
+                    # Get required fields
+                    for field in required_fields:
+                        key = f'availability[{i}][{field}]'
+                        if key not in data:
+                            logger.error(f"Missing required field {field} for availability item {i}")
+                            return Response({
+                                'error': f'Missing required field {field} for availability item {i}',
+                                'details': f'Key {key} not found in request data'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        availability_fields[field] = data[key]
+                    
+                    # Get optional fields
+                    for field in optional_fields:
+                        key = f'availability[{i}][{field}]'
+                        availability_fields[field] = data.get(key, None)
+                    
+                    # Process the fields
+                    region_id = int(availability_fields['region_id'])
+                    weekday = int(availability_fields['weekday'])
+                    
+                    # Process time fields
                     from datetime import datetime
                     
-                    start_time = None
-                    end_time = None
-                    break_start = None
-                    break_end = None
-                    
-                    if start_time_str:
+                    def parse_time(time_str):
+                        if not time_str or time_str.strip() == '':
+                            return None
                         try:
-                            start_time = datetime.strptime(start_time_str, '%H:%M:%S').time()
+                            return datetime.strptime(time_str, '%H:%M').time()
                         except ValueError:
                             try:
-                                start_time = datetime.strptime(start_time_str, '%H:%M').time()
+                                return datetime.strptime(time_str, '%H:%M:%S').time()
                             except ValueError:
-                                logger.error(f"Invalid start_time format: {start_time_str}")
-                                return Response({
-                                    'error': f'Invalid start_time format for availability item {i}',
-                                    'details': f'Expected HH:MM:SS or HH:MM, got: {start_time_str}'
-                                }, status=status.HTTP_400_BAD_REQUEST)
+                                return None
                     
-                    if end_time_str:
-                        try:
-                            end_time = datetime.strptime(end_time_str, '%H:%M:%S').time()
-                        except ValueError:
-                            try:
-                                end_time = datetime.strptime(end_time_str, '%H:%M').time()
-                            except ValueError:
-                                logger.error(f"Invalid end_time format: {end_time_str}")
-                                return Response({
-                                    'error': f'Invalid end_time format for availability item {i}',
-                                    'details': f'Expected HH:MM:SS or HH:MM, got: {end_time_str}'
-                                }, status=status.HTTP_400_BAD_REQUEST)
+                    start_time = parse_time(availability_fields['start_time'])
+                    end_time = parse_time(availability_fields['end_time'])
+                    break_start = parse_time(availability_fields['break_start'])
+                    break_end = parse_time(availability_fields['break_end'])
                     
-                    if break_start_str:
-                        try:
-                            break_start = datetime.strptime(break_start_str, '%H:%M:%S').time()
-                        except ValueError:
-                            try:
-                                break_start = datetime.strptime(break_start_str, '%H:%M').time()
-                            except ValueError:
-                                logger.warning(f"Invalid break_start format: {break_start_str}, setting to None")
-                                break_start = None
+                    if not start_time or not end_time:
+                        return Response({
+                            'error': f'Invalid time format for availability item {i}',
+                            'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
                     
-                    if break_end_str:
-                        try:
-                            break_end = datetime.strptime(break_end_str, '%H:%M:%S').time()
-                        except ValueError:
-                            try:
-                                break_end = datetime.strptime(break_end_str, '%H:%M').time()
-                            except ValueError:
-                                logger.warning(f"Invalid break_end format: {break_end_str}, setting to None")
-                                break_end = None
+                    # Validate time logic
+                    if end_time <= start_time:
+                        return Response({
+                            'error': f'End time must be after start time for availability item {i}',
+                            'details': f'Start: {start_time}, End: {end_time}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    # Handle is_active
+                    is_active_str = availability_fields.get('is_active', 'true')
+                    if isinstance(is_active_str, str):
+                        is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
+                    else:
+                        is_active = bool(is_active_str)
                     
                     availability_item = {
-                        'region_id': int(data.get(f'availability[{i}][region_id]')),
-                        'weekday': int(data.get(f'availability[{i}][weekday]')),
+                        'region_id': region_id,
+                        'weekday': weekday,
                         'start_time': start_time,
                         'end_time': end_time,
                         'break_start': break_start,
                         'break_end': break_end,
-                        'is_active': data.get(f'availability[{i}][is_active]', 'true').lower() == 'true'
+                        'is_active': is_active
                     }
                     
-                    # Validate that required fields are present
-                    if (availability_item['region_id'] is not None and 
-                        availability_item['weekday'] is not None and
-                        availability_item['start_time'] and 
-                        availability_item['end_time']):
-                        
-                        # Validate that end_time is after start_time
-                        if availability_item['end_time'] <= availability_item['start_time']:
-                            logger.error(f"End time must be after start time for availability item {i}")
-                            return Response({
-                                'error': f'End time must be after start time for availability item {i}',
-                                'details': f'Start: {start_time_str}, End: {end_time_str}'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                        
-                        availability_data.append(availability_item)
-                        logger.debug(f"Added availability item {i}: {availability_item}")
-                    else:
-                        logger.warning(f"Skipping availability item {i} - missing required data: region_id={availability_item['region_id']}, weekday={availability_item['weekday']}, start_time={availability_item['start_time']}, end_time={availability_item['end_time']}")
-                        return Response({
-                            'error': f'Missing required fields for availability item {i}',
-                            'details': {
-                                'region_id': 'This field is required.' if availability_item['region_id'] is None else None,
-                                'weekday': 'This field is required.' if availability_item['weekday'] is None else None,
-                                'start_time': 'This field is required.' if not availability_item['start_time'] else None,
-                                'end_time': 'This field is required.' if not availability_item['end_time'] else None,
-                            }
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                
-                except (ValueError, TypeError) as e:
+                    availability_data.append(availability_item)
+                    logger.debug(f"Added availability item {i}: {availability_item}")
+                    
+                except (ValueError, TypeError, KeyError) as e:
                     logger.error(f"Error processing availability item {i}: {e}")
                     return Response({
                         'error': f'Invalid availability data for item {i}',
@@ -979,1289 +1023,47 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                 data['availability'] = availability_data
                 logger.debug(f"Processed {len(availability_data)} availability items")
             
-            # Continue with serializer processing
-            try:
-                logger.debug(f"🔍 About to create serializer with data: {data}")
-                logger.debug(f"🔍 Data keys: {list(data.keys())}")
-                if 'availability' in data:
-                    logger.debug(f"🔍 Availability data type: {type(data['availability'])}")
-                    logger.debug(f"🔍 Availability data: {data['availability']}")
-                
-                serializer = self.get_serializer(instance, data=data, partial=True)
-                
-                logger.debug(f"🔍 Serializer created, checking validity...")
-                is_valid = serializer.is_valid()
-                logger.debug(f"🔍 Serializer is_valid: {is_valid}")
-                
-                if not is_valid:
-                    logger.error(f"❌ Serializer validation errors: {serializer.errors}")
-                    return Response({
-                        'error': 'Failed to update professional. Please check the logs for details.',
-                        'details': serializer.errors
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                logger.debug(f"🔍 Serializer is valid, performing update...")
-                self.perform_update(serializer)
-                
-                # Get updated instance
-                professional = serializer.instance
-                detail_serializer = AdminProfessionalDetailSerializer(professional)
-                
-                logger.info(f"✅ Successfully updated professional {professional.id}")
-                return Response(detail_serializer.data, status=status.HTTP_200_OK)
-                
-            except serializers.ValidationError as e:
-                logger.error(f"❌ Serializer validation error: {e.detail}")
+            # Create and validate serializer
+            serializer = self.get_serializer(instance, data=data, partial=True)
+            
+            logger.debug(f"🔍 Serializer created with data keys: {list(data.keys())}")
+            
+            if not serializer.is_valid():
+                logger.error(f"❌ Serializer validation errors: {serializer.errors}")
                 return Response({
-                    'error': 'Failed to update professional. Please check the logs for details.',
-                    'details': e.detail
+                    'error': 'Failed to update professional',
+                    'details': serializer.errors
                 }, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
-                logger.error(f"💥 Unexpected error during update: {str(e)}")
-                logger.error(f"Error type: {type(e).__name__}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                return Response({
-                    'error': 'Failed to update professional. Please check the logs for details.',
-                    'details': str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                
+            
+            # Save the updated instance
+            self.perform_update(serializer)
+            
+            # Get updated instance and return detailed response
+            professional = serializer.instance
+            detail_serializer = AdminProfessionalDetailSerializer(professional)
+            
+            # Log admin activity
+            AdminActivity.objects.create(
+                admin_user=request.user,
+                activity_type='professional_verification',
+                description=f"Updated professional: {professional.user.email}",
+                target_model='Professional',
+                target_id=str(professional.id)
+            )
+            
+            logger.info(f"✅ Successfully updated professional {professional.id}")
+            return Response(detail_serializer.data, status=status.HTTP_200_OK)
+            
         except Exception as e:
             logger.error(f"💥 Unexpected error in update method: {str(e)}")
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({
-                'error': 'Failed to update professional. Please check the logs for details.',
-                'details': str(e)
+                'error': 'Failed to update professional',
+                'details': str(e),
+                'type': type(e).__name__
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# ===================== CATEGORY MANAGEMENT =====================
-
-class AdminCategoryListView(generics.ListCreateAPIView):
-    """
-    List and create categories (admin)
-    """
-    serializer_class = AdminCategorySerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['region', 'is_active', 'is_featured']
-    search_fields = ['name', 'description']
-    ordering_fields = ['sort_order', 'name', 'created_at', 'is_featured']
-    ordering = ['sort_order', 'name']
-    
-    def get_queryset(self):
-        return Category.objects.select_related('region').prefetch_related('services')
-    
-    @swagger_auto_schema(
-        operation_description="Create new category (admin)",
-        request_body=AdminCategorySerializer,
-        responses={201: AdminCategorySerializer()}
-    )
-    def post(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        if response.status_code == 201:
-            category = Category.objects.get(id=response.data['id'])
-            detail_data = AdminCategorySerializer(category).data
-            AdminActivity.objects.create(
-                admin_user=request.user,
-                activity_type='content_moderation',
-                description=f"Created category: {response.data['name']}",
-                target_model='Category',
-                target_id=str(category.id)
-            )
-            return Response(detail_data, status=201)
-        return response
-
-
-class AdminCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete category (admin)
-    """
-    serializer_class = AdminCategorySerializer
-    permission_classes = [IsAdminUser]
-    queryset = Category.objects.all()
-
-
-# ===================== SERVICE MANAGEMENT =====================
-
-class AdminServiceListView(generics.ListCreateAPIView):
-    """
-    List and create services (admin)
-    """
-    serializer_class = AdminServiceSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['category', 'category__region', 'is_active', 'is_featured']
-    search_fields = ['name', 'description']
-    ordering_fields = ['sort_order', 'name', 'base_price', 'created_at']
-    ordering = ['sort_order', 'name']
-    
-    def get_queryset(self):
-        return Service.objects.select_related('category__region').prefetch_related('professionals')
-
-    @swagger_auto_schema(
-        operation_description="Create new service (admin)",
-        request_body=AdminServiceSerializer,
-        responses={201: AdminServiceSerializer()}
-    )
-    def post(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        if response.status_code == 201:
-            service = Service.objects.get(id=response.data['id'])
-            detail_data = AdminServiceSerializer(service).data
-            # Optionally log activity here
-            return Response(detail_data, status=201)
-        return response
-
-
-class AdminServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete service (admin)
-    """
-    serializer_class = AdminServiceSerializer
-    permission_classes = [IsAdminUser]
-    queryset = Service.objects.all()
-
-
-# ===================== REGIONAL PRICING MANAGEMENT =====================
-
-class AdminRegionalPricingListView(generics.ListCreateAPIView):
-    """
-    Manage regional pricing (admin)
-    """
-    serializer_class = AdminRegionalPricingSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['service', 'region', 'is_active']
-    search_fields = ['service__name', 'region__name']
-    ordering = ['service__name', 'region__name']
-    
-    def get_queryset(self):
-        return RegionalPricing.objects.select_related('service', 'region')
-
-
-class AdminRegionalPricingDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Update or delete regional pricing (admin)
-    """
-    serializer_class = AdminRegionalPricingSerializer
-    permission_classes = [IsAdminUser]
-    queryset = RegionalPricing.objects.all()
-
-
-# ===================== ADDON MANAGEMENT =====================
-
-class AdminAddOnListView(generics.ListCreateAPIView):
-    """
-    List and create add-ons (admin)
-    """
-    serializer_class = AdminAddOnSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['categories', 'region', 'is_active']
-    search_fields = ['name', 'description']
-    ordering = ['name']
-    
-    def get_queryset(self):
-        region = get_requested_region(self.request)
-        qs = AddOn.objects.prefetch_related('categories', 'region')
-        if region:
-            qs = qs.filter(region=region)
-        return qs
-
-
-class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete add-on (admin)
-    """
-    serializer_class = AdminAddOnSerializer
-    permission_classes = [IsAdminUser]
-    queryset = AddOn.objects.prefetch_related('categories', 'region')
-
-
-# ===================== BOOKING MANAGEMENT =====================
-
-class AdminBookingListView(generics.ListAPIView):
-    """
-    List bookings (admin)
-    """
-    serializer_class = AdminBookingSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'payment_status', 'region', 'scheduled_date']
-    search_fields = ['customer__email', 'professional__user__email', 'service__name']
-    ordering_fields = ['created_at', 'scheduled_date', 'total_amount']
-    ordering = ['-created_at']
-    
-    def get_queryset(self):
-        region = get_requested_region(self.request)
-        qs = Booking.objects.select_related(
-            'customer', 'professional__user', 'service', 'region'
-        )
-        if region:
-            qs = qs.filter(region=region)
-        return qs
-
-
-class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
-    """
-    Get and update booking (admin)
-    """
-    permission_classes = [IsAdminUser]
-    lookup_field = 'booking_id'
-    
-    def get_serializer_class(self):
-        if self.request.method in ['PUT', 'PATCH']:
-            return AdminBookingUpdateSerializer
-        return AdminBookingSerializer
-    
-    def get_queryset(self):
-        try:
-            return Booking.objects.select_related(
-                'customer', 'professional__user', 'service', 'region'
-            ).prefetch_related('pictures')
-        except Exception:
-            # Return queryset without pictures prefetch if table doesn't exist yet
-            return Booking.objects.select_related(
-                'customer', 'professional__user', 'service', 'region'
-            )
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Update booking status (admin)",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'booking_id': openapi.Schema(type=openapi.TYPE_STRING),
-            'new_status': openapi.Schema(type=openapi.TYPE_STRING),
-            'admin_notes': openapi.Schema(type=openapi.TYPE_STRING),
-        },
-        required=['booking_id', 'new_status']
-    ),
-    responses={200: 'Booking status updated'}
-)
-def update_booking_status(request):
-    """
-    Update booking status by admin
-    """
-    booking_id = request.data.get('booking_id')
-    new_status = request.data.get('new_status')
-    admin_notes = request.data.get('admin_notes', '')
-    
-    try:
-        booking = Booking.objects.get(booking_id=booking_id)
-        old_status = booking.status
-        
-        booking.status = new_status
-        booking.admin_notes = admin_notes
-        
-        if new_status == 'completed':
-            booking.completed_at = timezone.now()
-        
-        booking.save()
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='booking_management',
-            description=f"Updated booking {booking_id} status: {old_status} → {new_status}",
-            target_model='Booking',
-            target_id=str(booking.id),
-            previous_data={'status': old_status},
-            new_data={'status': new_status, 'admin_notes': admin_notes}
-        )
-        
-        # Send notification to customer
-        from notifications.tasks import create_notification
-        create_notification.delay(
-            user_id=booking.customer.id,
-            notification_type='booking_updated',
-            title='Booking Status Updated',
-            message=f'Your booking status has been updated to: {new_status}',
-            related_booking_id=booking.id
-        )
-        
-        return Response({'message': 'Booking status updated successfully'})
-        
-    except Booking.DoesNotExist:
-        return Response(
-            {'error': 'Booking not found'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Upload before/after pictures for booking (admin only)",
-    manual_parameters=[
-        openapi.Parameter(
-            'booking_id',
-            openapi.IN_FORM,
-            description="Booking UUID to add pictures to",
-            type=openapi.TYPE_STRING,
-            required=True
-        ),
-        openapi.Parameter(
-            'picture_type',
-            openapi.IN_FORM,
-            description="Type of pictures being uploaded",
-            type=openapi.TYPE_STRING,
-            enum=['before', 'after'],
-            required=True
-        ),
-        openapi.Parameter(
-            'images',
-            openapi.IN_FORM,
-            description="Image files to upload (1-6 images)",
-            type=openapi.TYPE_FILE,
-            required=True
-        ),
-        openapi.Parameter(
-            'captions',
-            openapi.IN_FORM,
-            description="Optional captions for images",
-            type=openapi.TYPE_STRING,
-            required=False
-        ),
-    ],
-    responses={201: 'Pictures uploaded successfully'}
-)
-def upload_booking_pictures(request):
-    """
-    Upload before/after pictures for booking (admin only)
-    Accepts multiple image files and optional captions
-    """
-    try:
-        from bookings.serializers import BookingPictureUploadSerializer, BookingPictureSerializer
-        
-        # Extract data from request
-        booking_id = request.data.get('booking_id')
-        picture_type = request.data.get('picture_type')
-        images = request.FILES.getlist('images')
-        captions = request.data.getlist('captions') if 'captions' in request.data else []
-        
-        # Validate required fields
-        if not booking_id:
-            return Response(
-                {'error': 'booking_id is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not picture_type or picture_type not in ['before', 'after']:
-            return Response(
-                {'error': 'picture_type is required and must be "before" or "after"'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not images:
-            return Response(
-                {'error': 'At least one image is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate booking exists
-        try:
-            booking = Booking.objects.get(booking_id=booking_id)
-        except Booking.DoesNotExist:
-            return Response(
-                {'error': 'Booking not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Prepare data for serializer
-        upload_data = {
-            'booking_id': booking_id,
-            'picture_type': picture_type,
-            'images': images,
-            'captions': captions if captions else []
-        }
-        
-        # Validate the upload
-        serializer = BookingPictureUploadSerializer(data=upload_data)
-        try:
-            if not serializer.is_valid():
-                return Response(
-                    {'errors': serializer.errors},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception as e:
-            # Check if this is a table doesn't exist error
-            if 'bookings_bookingpicture' in str(e) and ('does not exist' in str(e) or 'no such table' in str(e)):
-                return Response(
-                    {
-                        'error': 'Picture upload feature not available yet. Please run database migrations first.',
-                        'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                    },
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE
-                )
-            # Re-raise other exceptions
-            raise e
-        
-        # Create the pictures
-        try:
-            created_pictures = serializer.create_pictures(serializer.validated_data, request.user)
-        except Exception as e:
-            # Check if this is a table doesn't exist error
-            if 'bookings_bookingpicture' in str(e) and ('does not exist' in str(e) or 'no such table' in str(e)):
-                return Response(
-                    {
-                        'error': 'Picture upload feature not available yet. Please run database migrations first.',
-                        'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                    },
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE
-                )
-            # Re-raise other exceptions
-            raise e
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='booking_management',
-            description=f"Uploaded {len(created_pictures)} {picture_type} picture(s) for booking {booking_id}",
-            target_model='Booking',
-            target_id=str(booking.id),
-            new_data={
-                'picture_type': picture_type,
-                'pictures_count': len(created_pictures),
-                'picture_ids': [p.id for p in created_pictures]
-            }
-        )
-        
-        # Return success response with created pictures
-        picture_data = BookingPictureSerializer(created_pictures, many=True, context={'request': request}).data
-        
-        return Response({
-            'message': f'Successfully uploaded {len(created_pictures)} {picture_type} picture(s)',
-            'uploaded_pictures': picture_data,
-            'booking_id': str(booking_id),
-            'picture_type': picture_type
-        }, status=status.HTTP_201_CREATED)
-        
-    except Exception as e:
-        logger.error(f"Error uploading booking pictures: {str(e)}")
-        return Response(
-            {'error': 'Failed to upload pictures. Please try again.'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['GET'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Get all pictures for a specific booking (admin only)",
-    manual_parameters=[
-        openapi.Parameter(
-            'booking_id',
-            openapi.IN_PATH,
-            description="Booking UUID",
-            type=openapi.TYPE_STRING,
-            required=True
-        ),
-        openapi.Parameter(
-            'picture_type',
-            openapi.IN_QUERY,
-            description="Filter by picture type",
-            type=openapi.TYPE_STRING,
-            enum=['before', 'after'],
-            required=False
-        ),
-    ],
-    responses={200: 'List of booking pictures'}
-)
-def get_booking_pictures(request, booking_id):
-    """
-    Get all pictures for a specific booking with optional filtering by type
-    """
-    try:
-        from bookings.models import BookingPicture
-        from bookings.serializers import BookingPictureSerializer
-        
-        # Validate booking exists
-        try:
-            booking = Booking.objects.get(booking_id=booking_id)
-        except Booking.DoesNotExist:
-            return Response(
-                {'error': 'Booking not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Get pictures with optional filtering
-        pictures = BookingPicture.objects.filter(booking=booking)
-        
-        picture_type = request.query_params.get('picture_type')
-        if picture_type and picture_type in ['before', 'after']:
-            pictures = pictures.filter(picture_type=picture_type)
-        
-        pictures = pictures.order_by('picture_type', 'uploaded_at')
-        
-        # Serialize and return
-        serializer = BookingPictureSerializer(pictures, many=True, context={'request': request})
-        
-        # Add summary info
-        before_count = BookingPicture.objects.filter(booking=booking, picture_type='before').count()
-        after_count = BookingPicture.objects.filter(booking=booking, picture_type='after').count()
-        
-        return Response({
-            'booking_id': str(booking_id),
-            'pictures': serializer.data,
-            'summary': {
-                'before_count': before_count,
-                'after_count': after_count,
-                'total_count': before_count + after_count,
-                'can_add_before': 6 - before_count,
-                'can_add_after': 6 - after_count
-            }
-        })
-        
-    except Exception as e:
-        # Check if this is a table doesn't exist error
-        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
-            return Response(
-                {
-                    'error': 'Picture feature not available yet. Please run database migrations first.',
-                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        logger.error(f"Error getting booking pictures: {str(e)}")
-        return Response(
-            {'error': 'Failed to retrieve pictures'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['PUT', 'PATCH'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Update a specific booking picture (admin only)",
-    manual_parameters=[
-        openapi.Parameter(
-            'picture_id',
-            openapi.IN_PATH,
-            description="Picture ID",
-            type=openapi.TYPE_INTEGER,
-            required=True
-        ),
-    ],
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'caption': openapi.Schema(
-                type=openapi.TYPE_STRING,
-                description="New caption for the picture"
-            ),
-        }
-    ),
-    responses={200: 'Picture updated successfully'}
-)
-def update_booking_picture(request, picture_id):
-    """
-    Update a specific booking picture (currently only caption can be updated)
-    """
-    try:
-        from bookings.models import BookingPicture
-        from bookings.serializers import BookingPictureSerializer
-        
-        # Get the picture
-        try:
-            picture = BookingPicture.objects.get(id=picture_id)
-        except BookingPicture.DoesNotExist:
-            return Response(
-                {'error': 'Picture not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Update caption if provided
-        caption = request.data.get('caption', '')
-        if 'caption' in request.data:
-            picture.caption = caption
-            picture.save()
-            
-            # Log admin activity
-            AdminActivity.objects.create(
-                admin_user=request.user,
-                activity_type='booking_management',
-                description=f"Updated caption for {picture.picture_type} picture (ID: {picture_id}) for booking {picture.booking.booking_id}",
-                target_model='BookingPicture',
-                target_id=str(picture.id),
-                previous_data={'caption': picture.caption},
-                new_data={'caption': caption}
-            )
-        
-        # Return updated picture
-        serializer = BookingPictureSerializer(picture, context={'request': request})
-        return Response({
-            'message': 'Picture updated successfully',
-            'picture': serializer.data
-        })
-        
-    except Exception as e:
-        # Check if this is a table doesn't exist error
-        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
-            return Response(
-                {
-                    'error': 'Picture feature not available yet. Please run database migrations first.',
-                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        logger.error(f"Error updating booking picture: {str(e)}")
-        return Response(
-            {'error': 'Failed to update picture'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['DELETE'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Delete a specific booking picture (admin only)",
-    manual_parameters=[
-        openapi.Parameter(
-            'picture_id',
-            openapi.IN_PATH,
-            description="Picture ID to delete",
-            type=openapi.TYPE_INTEGER,
-            required=True
-        ),
-    ],
-    responses={204: 'Picture deleted successfully'}
-)
-def delete_booking_picture(request, picture_id):
-    """
-    Delete a specific booking picture
-    """
-    try:
-        from bookings.models import BookingPicture
-        
-        # Get the picture
-        try:
-            picture = BookingPicture.objects.get(id=picture_id)
-        except BookingPicture.DoesNotExist:
-            return Response(
-                {'error': 'Picture not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Store info for logging before deletion
-        booking_id = picture.booking.booking_id
-        picture_type = picture.picture_type
-        image_path = picture.image.name if picture.image else None
-        
-        # Delete the image file from storage
-        if picture.image:
-            try:
-                picture.image.delete(save=False)
-            except Exception as e:
-                logger.warning(f"Failed to delete image file {image_path}: {str(e)}")
-        
-        # Delete the database record
-        picture.delete()
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='booking_management',
-            description=f"Deleted {picture_type} picture (ID: {picture_id}) for booking {booking_id}",
-            target_model='BookingPicture',
-            target_id=str(picture_id),
-            previous_data={
-                'picture_type': picture_type,
-                'image_path': image_path,
-                'booking_id': str(booking_id)
-            }
-        )
-        
-        return Response({
-            'message': f'{picture_type.title()} picture deleted successfully',
-            'deleted_picture_id': picture_id,
-            'booking_id': str(booking_id)
-        }, status=status.HTTP_200_OK)
-        
-    except Exception as e:
-        # Check if this is a table doesn't exist error
-        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
-            return Response(
-                {
-                    'error': 'Picture feature not available yet. Please run database migrations first.',
-                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        logger.error(f"Error deleting booking picture: {str(e)}")
-        return Response(
-            {'error': 'Failed to delete picture'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Upload a single picture to a booking (admin only)",
-    manual_parameters=[
-        openapi.Parameter(
-            'booking_id',
-            openapi.IN_PATH,
-            description="Booking UUID to add picture to",
-            type=openapi.TYPE_STRING,
-            required=True
-        ),
-        openapi.Parameter(
-            'picture_type',
-            openapi.IN_FORM,
-            description="Type of picture being uploaded",
-            type=openapi.TYPE_STRING,
-            enum=['before', 'after'],
-            required=True
-        ),
-        openapi.Parameter(
-            'image',
-            openapi.IN_FORM,
-            description="Single image file to upload",
-            type=openapi.TYPE_FILE,
-            required=True
-        ),
-        openapi.Parameter(
-            'caption',
-            openapi.IN_FORM,
-            description="Optional caption for the image",
-            type=openapi.TYPE_STRING,
-            required=False
-        ),
-    ],
-    responses={201: 'Picture uploaded successfully'}
-)
-def upload_single_booking_picture(request, booking_id):
-    """
-    Upload a single picture to a booking (alternative to bulk upload)
-    """
-    try:
-        from bookings.models import BookingPicture
-        from bookings.serializers import BookingPictureSerializer
-        
-        # Extract data from request
-        picture_type = request.data.get('picture_type')
-        image = request.FILES.get('image')
-        caption = request.data.get('caption', '')
-        
-        # Validate required fields
-        if not picture_type or picture_type not in ['before', 'after']:
-            return Response(
-                {'error': 'picture_type is required and must be "before" or "after"'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not image:
-            return Response(
-                {'error': 'image file is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate booking exists
-        try:
-            booking = Booking.objects.get(booking_id=booking_id)
-        except Booking.DoesNotExist:
-            return Response(
-                {'error': 'Booking not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Check if we can add this picture without exceeding limit
-        if not BookingPicture.can_add_pictures(booking, picture_type, 1):
-            current_count = BookingPicture.get_picture_count(booking, picture_type)
-            return Response(
-                {
-                    'error': f'Cannot add more {picture_type} pictures. This booking already has {current_count} {picture_type} pictures. Maximum allowed is 6 per type.'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate image file
-        if image.size > 10 * 1024 * 1024:  # 10MB
-            return Response(
-                {'error': 'Image file size cannot exceed 10MB'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        allowed_formats = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
-        if hasattr(image, 'content_type') and image.content_type not in allowed_formats:
-            return Response(
-                {'error': 'Only JPEG, PNG, and WebP image formats are allowed'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Create the picture
-        picture = BookingPicture.objects.create(
-            booking=booking,
-            picture_type=picture_type,
-            image=image,
-            caption=caption,
-            uploaded_by=request.user
-        )
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='booking_management',
-            description=f"Uploaded single {picture_type} picture for booking {booking_id}",
-            target_model='BookingPicture',
-            target_id=str(picture.id),
-            new_data={
-                'picture_type': picture_type,
-                'caption': caption,
-                'booking_id': str(booking_id)
-            }
-        )
-        
-        # Return success response
-        serializer = BookingPictureSerializer(picture, context={'request': request})
-        return Response({
-            'message': f'Successfully uploaded {picture_type} picture',
-            'picture': serializer.data,
-            'booking_id': str(booking_id)
-        }, status=status.HTTP_201_CREATED)
-        
-    except Exception as e:
-        # Check if this is a table doesn't exist error
-        if 'bookings_bookingpicture' in str(e) and 'does not exist' in str(e):
-            return Response(
-                {
-                    'error': 'Picture upload feature not available yet. Please run database migrations first.',
-                    'details': 'Run: python manage.py makemigrations bookings && python manage.py migrate'
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        logger.error(f"Error uploading single booking picture: {str(e)}")
-        return Response(
-            {'error': 'Failed to upload picture'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-# ===================== PAYMENT MANAGEMENT =====================
-
-class AdminPaymentListView(generics.ListAPIView):
-    """
-    List payments (admin)
-    """
-    serializer_class = AdminPaymentSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'payment_type', 'currency']
-    search_fields = ['customer__email', 'booking__booking_id', 'stripe_payment_intent_id']
-    ordering_fields = ['created_at', 'amount', 'processed_at']
-    ordering = ['-created_at']
-    
-    def get_queryset(self):
-        return Payment.objects.select_related('customer', 'booking')
-
-
-class AdminPaymentDetailView(generics.RetrieveAPIView):
-    """
-    Get payment details (admin)
-    """
-    serializer_class = AdminPaymentSerializer
-    permission_classes = [IsAdminUser]
-    lookup_field = 'payment_id'
-    queryset = Payment.objects.select_related('customer', 'booking')
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Update payment status (admin)",
-    request_body=AdminPaymentUpdateSerializer,
-    responses={200: 'Payment status updated'}
-)
-def update_payment_status(request):
-    """
-    Update payment status by admin
-    """
-    serializer = AdminPaymentUpdateSerializer(data=request.data)
-    
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    payment_id = serializer.validated_data['payment_id']
-    new_status = serializer.validated_data['new_status']
-    admin_notes = serializer.validated_data.get('admin_notes', '')
-    
-    try:
-        payment = Payment.objects.get(payment_id=payment_id)
-        old_status = payment.status
-        
-        payment.status = new_status
-        payment.save()
-        
-        # Update booking payment status if needed
-        if new_status == 'succeeded':
-            booking = payment.booking
-            if payment.payment_type == 'deposit':
-                booking.payment_status = 'deposit_paid'
-            elif payment.payment_type in ['remaining', 'full']:
-                booking.payment_status = 'fully_paid'
-            booking.save()
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='payment_management',
-            description=f"Updated payment {payment_id} status: {old_status} → {new_status}",
-            target_model='Payment',
-            target_id=str(payment.id),
-            previous_data={'status': old_status},
-            new_data={'status': new_status, 'admin_notes': admin_notes}
-        )
-        
-        return Response({'message': 'Payment status updated successfully'})
-        
-    except Payment.DoesNotExist:
-        return Response(
-            {'error': 'Payment not found'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-# ===================== REGION MANAGEMENT =====================
-
-class AdminRegionListView(generics.ListCreateAPIView):
-    """
-    List and create regions (admin)
-    """
-    serializer_class = AdminRegionSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_active', 'currency']
-    search_fields = ['name', 'code', 'country_code']
-    ordering = ['name']
-    
-    def get_queryset(self):
-        return Region.objects.prefetch_related('current_users', 'professionals', 'categories')
-
-
-class AdminRegionDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Get, update, or delete region (admin)
-    """
-    serializer_class = AdminRegionSerializer
-    permission_classes = [IsAdminUser]
-    queryset = Region.objects.all()
-
-
-class AdminRegionalSettingsView(generics.ListCreateAPIView):
-    """
-    Manage regional settings (admin)
-    """
-    serializer_class = AdminRegionalSettingsSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['region']
-    search_fields = ['key', 'description']
-    
-    def get_queryset(self):
-        return RegionalSettings.objects.select_related('region')
-
-
-# ===================== REVIEW MODERATION =====================
-
-class AdminReviewListView(generics.ListAPIView):
-    """
-    Review moderation (admin)
-    """
-    serializer_class = AdminReviewModerationSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_verified', 'is_published', 'overall_rating']
-    search_fields = ['comment', 'customer__email', 'professional__user__email']
-    ordering_fields = ['created_at', 'overall_rating']
-    ordering = ['-created_at']
-    
-    def get_queryset(self):
-        return Review.objects.select_related(
-            'customer', 'professional__user', 'service'
-        )
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Moderate review (admin)",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'review_id': openapi.Schema(type=openapi.TYPE_INTEGER),
-            'action': openapi.Schema(type=openapi.TYPE_STRING, enum=['approve', 'reject', 'delete']),
-            'reason': openapi.Schema(type=openapi.TYPE_STRING),
-        },
-        required=['review_id', 'action']
-    ),
-    responses={200: 'Review moderated'}
-)
-def moderate_review(request):
-    """
-    Moderate review by admin
-    """
-    review_id = request.data.get('review_id')
-    action = request.data.get('action')
-    reason = request.data.get('reason', '')
-    
-    try:
-        review = Review.objects.get(id=review_id)
-        
-        if action == 'approve':
-            review.is_verified = True
-            review.is_published = True
-        elif action == 'reject':
-            review.is_published = False
-        elif action == 'delete':
-            review.delete()
-            
-            AdminActivity.objects.create(
-                admin_user=request.user,
-                activity_type='content_moderation',
-                description=f"Deleted review by {review.customer.email}",
-                target_model='Review',
-                target_id=str(review_id)
-            )
-            
-            return Response({'message': 'Review deleted successfully'})
-        
-        review.save()
-        
-        # Update professional rating if needed
-        if action == 'approve':
-            review.professional.update_rating()
-        
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='content_moderation',
-            description=f"Moderated review: {action} - {reason}",
-            target_model='Review',
-            target_id=str(review.id)
-        )
-        
-        return Response({'message': f'Review {action}ed successfully'})
-        
-    except Review.DoesNotExist:
-        return Response(
-            {'error': 'Review not found'},
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-# ===================== NOTIFICATION MANAGEMENT =====================
-
-class AdminNotificationListView(generics.ListAPIView):
-    """
-    List notifications (admin)
-    """
-    serializer_class = AdminNotificationSerializer
-    permission_classes = [IsAdminUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['notification_type', 'is_read', 'push_sent', 'email_sent']
-    search_fields = ['title', 'message', 'user__email']
-    ordering_fields = ['created_at']
-    ordering = ['-created_at']
-    
-    def get_queryset(self):
-        return Notification.objects.select_related('user')
-
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Send broadcast notification (admin)",
-    request_body=BroadcastNotificationSerializer,
-    responses={200: 'Notification sent'}
-)
-def send_broadcast_notification(request):
-    """
-    Send broadcast notification to users
-    """
-    serializer = BroadcastNotificationSerializer(data=request.data)
-    
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    target = serializer.validated_data['target']
-    region = serializer.validated_data.get('region')
-    title = serializer.validated_data['title']
-    message = serializer.validated_data['message']
-    send_push = serializer.validated_data['send_push']
-    send_email = serializer.validated_data['send_email']
-    
-    # Get target users
-    if target == 'all':
-        users = User.objects.filter(is_active=True)
-    elif target == 'customers':
-        users = User.objects.filter(user_type='customer', is_active=True)
-    elif target == 'professionals':
-        users = User.objects.filter(user_type='professional', is_active=True)
-    elif target == 'region':
-        users = User.objects.filter(current_region=region, is_active=True)
-    elif target == 'verified_professionals':
-        professional_user_ids = Professional.objects.filter(
-            is_verified=True, is_active=True
-        ).values_list('user_id', flat=True)
-        users = User.objects.filter(id__in=professional_user_ids, is_active=True)
-    
-    # Send notifications asynchronously
-    from notifications.tasks import create_notification, send_push_notification, send_email_notification
-    
-    user_count = 0
-    for user in users[:1000]:  # Limit to prevent overload
-        create_notification.delay(
-            user_id=user.id,
-            notification_type='system_announcement',
-            title=title,
-            message=message
-        )
-        
-        if send_push:
-            send_push_notification.delay(
-                user_id=user.id,
-                title=title,
-                body=message,
-                data={'type': 'broadcast'}
-            )
-        
-        if send_email:
-            send_email_notification.delay(
-                user_id=user.id,
-                subject=title,
-                template='emails/broadcast_notification.html',
-                context={'title': title, 'message': message}
-            )
-        
-        user_count += 1
-    
-    # Log admin activity
-    AdminActivity.objects.create(
-        admin_user=request.user,
-        activity_type='system_configuration',
-        description=f"Sent broadcast notification to {user_count} users: {title}",
-        target_model='Notification',
-        new_data={
-            'target': target,
-            'title': title,
-            'user_count': user_count
-        }
-    )
-    
-    return Response({
-        'message': f'Broadcast notification sent to {user_count} users',
-        'user_count': user_count
-    })
-
-
-# ===================== BULK OPERATIONS =====================
-
-@api_view(['POST'])
-@permission_classes([IsAdminUser])
-@swagger_auto_schema(
-    operation_description="Perform bulk operations (admin)",
-    request_body=openapi.Schema(
-        type=openapi.TYPE_OBJECT,
-        properties={
-            'model': openapi.Schema(type=openapi.TYPE_STRING),
-            'operation': openapi.Schema(type=openapi.TYPE_STRING),
-            'ids': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_INTEGER)),
-            'reason': openapi.Schema(type=openapi.TYPE_STRING),
-        },
-        required=['model', 'operation', 'ids']
-    ),
-    responses={200: 'Bulk operation completed'}
-)
-def bulk_operations(request):
-    """
-    Perform bulk operations on multiple items
-    """
-    model_name = request.data.get('model')
-    operation = request.data.get('operation')
-    ids = request.data.get('ids', [])
-    reason = request.data.get('reason', '')
-    
-    if not all([model_name, operation, ids]):
-        return Response(
-            {'error': 'model, operation, and ids are required'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Map model names to actual models
-    model_mapping = {
-        'user': User,
-        'professional': Professional,
-        'category': Category,
-        'service': Service,
-        'addon': AddOn,
-        'booking': Booking,
-        'review': Review,
-    }
-    
-    if model_name not in model_mapping:
-        return Response(
-            {'error': 'Invalid model name'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    model_class = model_mapping[model_name]
-    
-    try:
-        queryset = model_class.objects.filter(id__in=ids)
-        count = queryset.count()
-        
-        if operation == 'activate':
-            queryset.update(is_active=True)
-        elif operation == 'deactivate':
-            queryset.update(is_active=False)
-        elif operation == 'verify' and model_name == 'professional':
-            queryset.update(is_verified=True, verified_at=timezone.now())
-        elif operation == 'unverify' and model_name == 'professional':
-            queryset.update(is_verified=False)
-        elif operation == 'feature' and model_name == 'category':
-            queryset.update(is_featured=True)
-        elif operation == 'unfeature' and model_name == 'category':
-            queryset.update(is_featured=False)
-        elif operation == 'delete':
-            queryset.delete()
-        else:
-            return Response(
-                {'error': 'Invalid operation'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Log admin activity
-        AdminActivity.objects.create(
-            admin_user=request.user,
-            activity_type='system_configuration',
-            description=f"Bulk {operation} on {count} {model_name}s: {reason}",
-            target_model=model_class.__name__,
-            new_data={
-                'operation': operation,
-                'count': count,
-                'ids': ids,
-                'reason': reason
-            }
-        )
-        
-        return Response({
-            'message': f'Bulk {operation} completed on {count} {model_name}s',
-            'count': count
-        })
-        
-    except Exception as e:
-        return Response(
-            {'error': str(e)},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-        
 # Add these missing view functions to the end of admin_panel/views.py
 
 @api_view(['POST'])
