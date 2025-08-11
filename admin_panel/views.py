@@ -1291,6 +1291,275 @@ class SupportTicketsView(generics.ListAPIView):
         return SupportTicket.objects.all().order_by('-created_at')
 
 
+# ===================== CATEGORY MANAGEMENT VIEWS =====================
+
+class AdminCategoryListView(generics.ListCreateAPIView):
+    """
+    List and create categories (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminCategorySerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['region', 'is_active', 'is_featured']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at', 'services_count']
+    ordering = ['name']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Category.objects.none()
+        return Category.objects.select_related('region').prefetch_related('services').all()
+
+
+class AdminCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete category (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminCategorySerializer
+    queryset = Category.objects.select_related('region').prefetch_related('services', 'addons')
+    
+    def perform_destroy(self, instance):
+        # Check if category has services
+        if instance.services.exists():
+            raise serializers.ValidationError("Cannot delete category with existing services")
+        instance.delete()
+
+
+# ===================== SERVICE MANAGEMENT VIEWS =====================
+
+class AdminServiceListView(generics.ListCreateAPIView):
+    """
+    List and create services (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminServiceSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['category', 'category__region', 'is_active', 'is_featured']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at', 'professionals_count', 'bookings_count']
+    ordering = ['name']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Service.objects.none()
+        return Service.objects.select_related('category', 'category__region').all()
+
+
+class AdminServiceDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete service (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminServiceSerializer
+    queryset = Service.objects.select_related('category', 'category__region')
+
+
+# ===================== REGIONAL PRICING MANAGEMENT VIEWS =====================
+
+class AdminRegionalPricingListView(generics.ListCreateAPIView):
+    """
+    List and create regional pricing (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminRegionalPricingSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['service', 'region', 'service__category']
+    search_fields = ['service__name', 'region__name']
+    ordering_fields = ['service__name', 'region__name', 'price']
+    ordering = ['service__name', 'region__name']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return RegionalPricing.objects.none()
+        return RegionalPricing.objects.select_related('service', 'service__category', 'region').all()
+
+
+class AdminRegionalPricingDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete regional pricing (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminRegionalPricingSerializer
+    queryset = RegionalPricing.objects.select_related('service', 'service__category', 'region')
+
+
+# ===================== ADDON MANAGEMENT VIEWS =====================
+
+class AdminAddOnListView(generics.ListCreateAPIView):
+    """
+    List and create addons (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminAddOnSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['region', 'is_active', 'is_featured']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'price', 'created_at']
+    ordering = ['name']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return AddOn.objects.none()
+        return AddOn.objects.select_related('region').prefetch_related('categories').all()
+
+
+class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete addon (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminAddOnSerializer
+    queryset = AddOn.objects.select_related('region').prefetch_related('categories')
+
+
+# ===================== BOOKING MANAGEMENT VIEWS =====================
+
+class AdminBookingListView(generics.ListAPIView):
+    """
+    List bookings (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminBookingSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status', 'payment_status', 'region', 'service', 'professional']
+    search_fields = ['booking_id', 'customer__first_name', 'customer__last_name', 'customer__email']
+    ordering_fields = ['created_at', 'scheduled_date', 'total_amount']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Booking.objects.none()
+        return Booking.objects.select_related(
+            'customer', 'professional', 'professional__user', 'service', 'region'
+        ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages').all()
+
+
+class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
+    """
+    Get and update booking (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminBookingUpdateSerializer
+    queryset = Booking.objects.select_related(
+        'customer', 'professional', 'professional__user', 'service', 'region'
+    ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+
+
+# ===================== PAYMENT MANAGEMENT VIEWS =====================
+
+class AdminPaymentListView(generics.ListAPIView):
+    """
+    List payments (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminPaymentSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status', 'payment_type', 'booking__region']
+    search_fields = ['payment_id', 'customer__first_name', 'customer__last_name', 'customer__email']
+    ordering_fields = ['created_at', 'amount']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Payment.objects.none()
+        return Payment.objects.select_related('customer', 'booking', 'booking__region').all()
+
+
+class AdminPaymentDetailView(generics.RetrieveAPIView):
+    """
+    Get payment details (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminPaymentSerializer
+    queryset = Payment.objects.select_related('customer', 'booking', 'booking__region')
+
+
+# ===================== REGION MANAGEMENT VIEWS =====================
+
+class AdminRegionListView(generics.ListCreateAPIView):
+    """
+    List and create regions (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminRegionSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['name', 'code', 'description']
+    ordering_fields = ['name', 'code', 'created_at']
+    ordering = ['name']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Region.objects.none()
+        return Region.objects.all()
+
+
+class AdminRegionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Get, update, or delete region (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminRegionSerializer
+    queryset = Region.objects.all()
+
+
+class AdminRegionalSettingsView(generics.RetrieveUpdateAPIView):
+    """
+    Get and update regional settings (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminRegionalSettingsSerializer
+    
+    def get_object(self):
+        region_id = self.kwargs.get('region_id')
+        if region_id:
+            return RegionalSettings.objects.get(region_id=region_id)
+        return RegionalSettings.objects.first()
+
+
+# ===================== REVIEW MODERATION VIEWS =====================
+
+class AdminReviewListView(generics.ListAPIView):
+    """
+    List reviews for moderation (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminReviewModerationSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['rating', 'is_approved', 'professional', 'service']
+    search_fields = ['customer__first_name', 'customer__last_name', 'professional__user__first_name']
+    ordering_fields = ['created_at', 'rating']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Review.objects.none()
+        return Review.objects.select_related(
+            'customer', 'professional', 'professional__user', 'service'
+        ).all()
+
+
+# ===================== NOTIFICATION MANAGEMENT VIEWS =====================
+
+class AdminNotificationListView(generics.ListAPIView):
+    """
+    List notifications (admin)
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = AdminNotificationSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['notification_type', 'is_read', 'user']
+    search_fields = ['title', 'message', 'user__first_name', 'user__last_name']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Notification.objects.none()
+        return Notification.objects.select_related('user').all()
+
+
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 @swagger_auto_schema(
@@ -1453,7 +1722,7 @@ def handle_reschedule_request(request):
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
 @swagger_auto_schema(
-    operation_description="Fix booking payment status (admin)",
+    operation_description="Fix booking payment status (admin utility)",
     request_body=openapi.Schema(
         type=openapi.TYPE_OBJECT,
         required=['booking_id'],
@@ -1560,22 +1829,276 @@ def test_professional_update(request):
 @permission_classes([IsAdminUser])
 def debug_info(request):
     """
-    Debug endpoint to show system information
+    Debug information endpoint
     """
-    import sys
-    import django
-    import logging
-    from django.conf import settings
+    return Response({
+        'message': 'Debug endpoint working',
+        'user': request.user.username if request.user.is_authenticated else 'Anonymous',
+        'timestamp': timezone.now().isoformat()
+    })
+
+
+# ===================== MISSING API FUNCTIONS =====================
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Update booking status (admin)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['booking_id', 'new_status'],
+        properties={
+            'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),
+            'new_status': openapi.Schema(type=openapi.TYPE_STRING, enum=['pending', 'confirmed', 'in_progress', 'completed', 'cancelled']),
+            'admin_notes': openapi.Schema(type=openapi.TYPE_STRING),
+        }
+    ),
+    responses={200: 'Booking status updated'}
+)
+def update_booking_status(request):
+    """
+    Update booking status by admin
+    """
+    booking_id = request.data.get('booking_id')
+    new_status = request.data.get('new_status')
+    admin_notes = request.data.get('admin_notes', '')
     
-    logger = logging.getLogger(__name__)
-    logger.debug("Debug info endpoint called")
+    if not booking_id or not new_status:
+        return Response(
+            {'error': 'booking_id and new_status are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        booking = Booking.objects.get(booking_id=booking_id)
+        booking.status = new_status
+        if admin_notes:
+            booking.admin_notes = admin_notes
+        booking.save()
+        
+        return Response({'message': f'Booking status updated to {new_status}'})
+    except Booking.DoesNotExist:
+        return Response(
+            {'error': 'Booking not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Update payment status (admin)",
+    request_body=AdminPaymentUpdateSerializer,
+    responses={200: 'Payment status updated'}
+)
+def update_payment_status(request):
+    """
+    Update payment status by admin
+    """
+    serializer = AdminPaymentUpdateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    payment_id = serializer.validated_data['payment_id']
+    new_status = serializer.validated_data['new_status']
+    admin_notes = serializer.validated_data.get('admin_notes', '')
+    
+    try:
+        payment = Payment.objects.get(payment_id=payment_id)
+        payment.status = new_status
+        if admin_notes:
+            payment.admin_notes = admin_notes
+        payment.save()
+        
+        return Response({'message': f'Payment status updated to {new_status}'})
+    except Payment.DoesNotExist:
+        return Response(
+            {'error': 'Payment not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Moderate review (admin)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['review_id', 'action'],
+        properties={
+            'review_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+            'action': openapi.Schema(type=openapi.TYPE_STRING, enum=['approve', 'reject']),
+            'admin_notes': openapi.Schema(type=openapi.TYPE_STRING),
+        }
+    ),
+    responses={200: 'Review moderated'}
+)
+def moderate_review(request):
+    """
+    Moderate review by admin
+    """
+    review_id = request.data.get('review_id')
+    action = request.data.get('action')
+    admin_notes = request.data.get('admin_notes', '')
+    
+    if not review_id or not action:
+        return Response(
+            {'error': 'review_id and action are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    if action not in ['approve', 'reject']:
+        return Response(
+            {'error': 'action must be either "approve" or "reject"'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        review = Review.objects.get(id=review_id)
+        review.is_approved = (action == 'approve')
+        if admin_notes:
+            review.admin_notes = admin_notes
+        review.save()
+        
+        return Response({'message': f'Review {action}ed successfully'})
+    except Review.DoesNotExist:
+        return Response(
+            {'error': 'Review not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Send broadcast notification (admin)",
+    request_body=BroadcastNotificationSerializer,
+    responses={200: 'Notification sent'}
+)
+def send_broadcast_notification(request):
+    """
+    Send broadcast notification by admin
+    """
+    serializer = BroadcastNotificationSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    target = serializer.validated_data['target']
+    region = serializer.validated_data.get('region')
+    title = serializer.validated_data['title']
+    message = serializer.validated_data['message']
+    send_push = serializer.validated_data.get('send_push', True)
+    send_email = serializer.validated_data.get('send_email', False)
+    
+    # Determine target users based on target type
+    if target == 'all':
+        users = User.objects.filter(is_active=True)
+    elif target == 'customers':
+        users = User.objects.filter(user_type='customer', is_active=True)
+    elif target == 'professionals':
+        users = User.objects.filter(user_type='professional', is_active=True)
+    elif target == 'region':
+        if not region:
+            return Response(
+                {'error': 'region is required for region target'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        users = User.objects.filter(current_region=region, is_active=True)
+    elif target == 'verified_professionals':
+        users = User.objects.filter(
+            user_type='professional',
+            is_active=True,
+            professional__is_verified=True
+        )
+    else:
+        return Response(
+            {'error': 'Invalid target type'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Create notifications for all target users
+    notifications_created = 0
+    for user in users:
+        Notification.objects.create(
+            user=user,
+            title=title,
+            message=message,
+            notification_type='admin_broadcast',
+            sender=request.user
+        )
+        notifications_created += 1
     
     return Response({
-        'debug_enabled': settings.DEBUG,
-        'python_version': sys.version,
-        'django_version': django.get_version(),
-        'installed_apps': list(settings.INSTALLED_APPS),
-        'middleware': list(settings.MIDDLEWARE),
-        'database_engine': settings.DATABASES['default']['ENGINE'],
-        'allowed_hosts': settings.ALLOWED_HOSTS,
+        'message': f'Broadcast notification sent to {notifications_created} users',
+        'users_notified': notifications_created
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Perform bulk operations (admin)",
+    request_body=BulkOperationSerializer,
+    responses={200: 'Bulk operation completed'}
+)
+def bulk_operations(request):
+    """
+    Perform bulk operations by admin
+    """
+    serializer = BulkOperationSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    ids = serializer.validated_data['ids']
+    operation = serializer.validated_data['operation']
+    reason = serializer.validated_data.get('reason', '')
+    
+    # Determine model based on operation
+    if operation in ['activate', 'deactivate']:
+        model = User
+        field = 'is_active'
+        value = (operation == 'activate')
+    elif operation in ['verify', 'unverify']:
+        model = Professional
+        field = 'is_verified'
+        value = (operation == 'verify')
+    elif operation in ['feature', 'unfeature']:
+        model = Service
+        field = 'is_featured'
+        value = (operation == 'feature')
+    elif operation == 'delete':
+        # Handle deletion separately
+        try:
+            # Try to delete from multiple models
+            deleted_count = 0
+            for model_class in [User, Professional, Service, Category]:
+                deleted_count += model_class.objects.filter(id__in=ids).delete()[0]
+            
+            return Response({
+                'message': f'Successfully deleted {deleted_count} items',
+                'deleted_count': deleted_count
+            })
+        except Exception as e:
+            return Response(
+                {'error': f'Error during deletion: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    else:
+        return Response(
+            {'error': 'Invalid operation'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Perform bulk update
+    try:
+        updated_count = model.objects.filter(id__in=ids).update(**{field: value})
+        
+        return Response({
+            'message': f'Successfully {operation}d {updated_count} items',
+            'updated_count': updated_count
+        })
+    except Exception as e:
+        return Response(
+            {'error': f'Error during bulk operation: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
