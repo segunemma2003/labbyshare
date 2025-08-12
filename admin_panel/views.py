@@ -806,93 +806,93 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             logger.debug(f"🔍 Has availability data: {has_availability_data}")
             
             if has_availability_data:
-                while f'availability[{i}][region_id]' in data:
-                    try:
-                        # Extract all fields for this availability item
-                        availability_fields = {}
-                        required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
-                        optional_fields = ['break_start', 'break_end', 'is_active']
-                        
-                        # Get required fields
-                        for field in required_fields:
-                            key = f'availability[{i}][{field}]'
-                            if key not in data:
-                                logger.error(f"Missing required field {field} for availability item {i}")
-                                return Response({
-                                    'error': f'Missing required field {field} for availability item {i}',
-                                    'details': f'Key {key} not found in request data'
-                                }, status=status.HTTP_400_BAD_REQUEST)
-                            availability_fields[field] = data[key]
-                        
-                        # Get optional fields
-                        for field in optional_fields:
-                            key = f'availability[{i}][{field}]'
-                            availability_fields[field] = data.get(key, None)
-                        
-                        # Process the fields
-                        region_id = int(availability_fields['region_id'])
-                        weekday = int(availability_fields['weekday'])
-                        
-                        # Process time fields
-                        from datetime import datetime
-                        
-                        def parse_time(time_str):
-                            if not time_str or time_str.strip() == '':
-                                return None
+            while f'availability[{i}][region_id]' in data:
+                try:
+                    # Extract all fields for this availability item
+                    availability_fields = {}
+                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                    optional_fields = ['break_start', 'break_end', 'is_active']
+                    
+                    # Get required fields
+                    for field in required_fields:
+                        key = f'availability[{i}][{field}]'
+                        if key not in data:
+                            logger.error(f"Missing required field {field} for availability item {i}")
+                            return Response({
+                                'error': f'Missing required field {field} for availability item {i}',
+                                'details': f'Key {key} not found in request data'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        availability_fields[field] = data[key]
+                    
+                    # Get optional fields
+                    for field in optional_fields:
+                        key = f'availability[{i}][{field}]'
+                        availability_fields[field] = data.get(key, None)
+                    
+                    # Process the fields
+                    region_id = int(availability_fields['region_id'])
+                    weekday = int(availability_fields['weekday'])
+                    
+                    # Process time fields
+                    from datetime import datetime
+                    
+                    def parse_time(time_str):
+                        if not time_str or time_str.strip() == '':
+                            return None
+                        try:
+                            return datetime.strptime(time_str, '%H:%M').time()
+                        except ValueError:
                             try:
-                                return datetime.strptime(time_str, '%H:%M').time()
+                                return datetime.strptime(time_str, '%H:%M:%S').time()
                             except ValueError:
-                                try:
-                                    return datetime.strptime(time_str, '%H:%M:%S').time()
-                                except ValueError:
-                                    return None
-                        
-                        start_time = parse_time(availability_fields['start_time'])
-                        end_time = parse_time(availability_fields['end_time'])
+                                return None
+                    
+                    start_time = parse_time(availability_fields['start_time'])
+                    end_time = parse_time(availability_fields['end_time'])
                         break_start = parse_time(availability_fields.get('break_start')) if availability_fields.get('break_start') else None
                         break_end = parse_time(availability_fields.get('break_end')) if availability_fields.get('break_end') else None
-                        
-                        if not start_time or not end_time:
-                            return Response({
-                                'error': f'Invalid time format for availability item {i}',
-                                'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                        
-                        # Validate time logic
-                        if end_time <= start_time:
-                            return Response({
-                                'error': f'End time must be after start time for availability item {i}',
-                                'details': f'Start: {start_time}, End: {end_time}'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                        
-                        # Handle is_active
-                        is_active_str = availability_fields.get('is_active', 'true')
-                        if isinstance(is_active_str, str):
-                            is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
-                        else:
-                            is_active = bool(is_active_str)
-                        
-                        availability_item = {
-                            'region_id': region_id,
-                            'weekday': weekday,
-                            'start_time': start_time,
-                            'end_time': end_time,
-                            'break_start': break_start,
-                            'break_end': break_end,
-                            'is_active': is_active
-                        }
-                        
-                        availability_data.append(availability_item)
-                        logger.debug(f"Added availability item {i}: {availability_item}")
-                        
-                    except (ValueError, TypeError, KeyError) as e:
-                        logger.error(f"Error processing availability item {i}: {e}")
+                    
+                    if not start_time or not end_time:
                         return Response({
-                            'error': f'Invalid availability data for item {i}',
-                            'details': str(e)
+                            'error': f'Invalid time format for availability item {i}',
+                            'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
                         }, status=status.HTTP_400_BAD_REQUEST)
                     
-                    i += 1
+                    # Validate time logic
+                    if end_time <= start_time:
+                        return Response({
+                            'error': f'End time must be after start time for availability item {i}',
+                            'details': f'Start: {start_time}, End: {end_time}'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    # Handle is_active
+                    is_active_str = availability_fields.get('is_active', 'true')
+                    if isinstance(is_active_str, str):
+                        is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
+                    else:
+                        is_active = bool(is_active_str)
+                    
+                    availability_item = {
+                        'region_id': region_id,
+                        'weekday': weekday,
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'break_start': break_start,
+                        'break_end': break_end,
+                        'is_active': is_active
+                    }
+                    
+                    availability_data.append(availability_item)
+                    logger.debug(f"Added availability item {i}: {availability_item}")
+                    
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.error(f"Error processing availability item {i}: {e}")
+                    return Response({
+                        'error': f'Invalid availability data for item {i}',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                i += 1
             else:
                 logger.debug("No availability data found in form_data")
             
@@ -1316,9 +1316,9 @@ class AdminAddOnDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 # ===================== BOOKING MANAGEMENT VIEWS =====================
 
-class AdminBookingListView(generics.ListAPIView):
+class AdminBookingListView(generics.ListCreateAPIView):
     """
-    List bookings (admin)
+    List and create bookings (admin)
     """
     permission_classes = [IsAdminUser]
     serializer_class = AdminBookingSerializer
@@ -1333,7 +1333,84 @@ class AdminBookingListView(generics.ListAPIView):
             return Booking.objects.none()
         return Booking.objects.select_related(
             'customer', 'professional', 'professional__user', 'service', 'region'
-        ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages').all()
+        ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+    
+    def get_serializer_class(self):
+        """Use different serializers for different operations"""
+        if self.request.method == 'POST':
+            return AdminBookingCreateSerializer
+        return AdminBookingSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """Handle booking creation with form_data support"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"🔍 AdminBookingListView.create called")
+        logger.debug(f"🔍 Request method: {request.method}")
+        logger.debug(f"🔍 Content type: {request.content_type}")
+        logger.debug(f"🔍 Data keys: {list(request.data.keys())}")
+        
+        # Handle form_data preprocessing
+        data = request.data.copy()
+        
+        # Handle selected_addons field
+        if 'selected_addons' in data:
+            addons_data = data.getlist('selected_addons') if hasattr(data, 'getlist') else data.get('selected_addons')
+            logger.debug(f"🔍 Raw selected_addons data: {addons_data} (type: {type(addons_data)})")
+            if addons_data:
+                if not isinstance(addons_data, (list, tuple)):
+                    addons_data = [addons_data]
+                try:
+                    # Flatten the list if it's nested
+                    if addons_data and isinstance(addons_data[0], (list, tuple)):
+                        addons_data = addons_data[0]
+                    
+                    # Handle APIClient format conversion (dictionary with numeric keys)
+                    if isinstance(addons_data, dict):
+                        addons_data = list(addons_data.values())
+                    
+                    logger.debug(f"🔍 Processed addons_data: {addons_data} (type: {type(addons_data)})")
+                    addon_ids = [int(addon_id) for addon_id in addons_data if addon_id]
+                    # For many=True fields, we need to pass the list directly
+                    data['selected_addons'] = addon_ids
+                    logger.debug(f"Processed selected_addons: {addon_ids}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing selected_addons: {e}")
+                    return Response({
+                        'error': 'Invalid addon IDs provided',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Handle boolean fields
+        boolean_fields = ['booking_for_self', 'deposit_required']
+        for field in boolean_fields:
+            if field in data:
+                value = data.get(field)
+                if isinstance(value, str):
+                    data[field] = value.lower() in ['true', '1', 'yes', 'on']
+        
+        # Handle numeric fields
+        numeric_fields = ['base_amount', 'addon_amount', 'discount_amount', 'tax_amount', 'total_amount', 'deposit_percentage', 'deposit_amount', 'duration_minutes']
+        for field in numeric_fields:
+            if field in data:
+                try:
+                    data[field] = float(data.get(field)) if data.get(field) else 0.0
+                except (ValueError, TypeError):
+                    data[field] = 0.0
+        
+        # Create and validate serializer
+        serializer = self.get_serializer(data=data)
+        if serializer.is_valid():
+            booking = serializer.save()
+            logger.info(f"✅ Successfully created booking {booking.booking_id}")
+            
+            # Use AdminBookingSerializer for the response
+            response_serializer = AdminBookingSerializer(booking, context=self.get_serializer_context())
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            logger.error(f"❌ Booking creation failed: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
@@ -1345,6 +1422,89 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
     queryset = Booking.objects.select_related(
         'customer', 'professional', 'professional__user', 'service', 'region'
     ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+    
+    def update(self, request, *args, **kwargs):
+        """Handle booking update with form_data support"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"🔍 AdminBookingDetailView.update called")
+        logger.debug(f"🔍 Request method: {request.method}")
+        logger.debug(f"🔍 Content type: {request.content_type}")
+        logger.debug(f"🔍 Data keys: {list(request.data.keys())}")
+        
+        # Handle form_data preprocessing
+        data = request.data.copy()
+        
+        # Handle selected_addons field
+        if 'selected_addons' in data:
+            addons_data = data.getlist('selected_addons') if hasattr(data, 'getlist') else data.get('selected_addons')
+            logger.debug(f"🔍 Raw selected_addons data: {addons_data} (type: {type(addons_data)})")
+            if addons_data:
+                if not isinstance(addons_data, (list, tuple)):
+                    addons_data = [addons_data]
+                try:
+                    # Flatten the list if it's nested
+                    if addons_data and isinstance(addons_data[0], (list, tuple)):
+                        addons_data = addons_data[0]
+                    
+                    # Handle APIClient format conversion (dictionary with numeric keys)
+                    if isinstance(addons_data, dict):
+                        addons_data = list(addons_data.values())
+                    
+                    logger.debug(f"🔍 Processed addons_data: {addons_data} (type: {type(addons_data)})")
+                    addon_ids = [int(addon_id) for addon_id in addons_data if addon_id]
+                    # For many=True fields, we need to pass the list directly
+                    data['selected_addons'] = addon_ids
+                    logger.debug(f"Processed selected_addons: {addon_ids}")
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing selected_addons: {e}")
+                    return Response({
+                        'error': 'Invalid addon IDs provided',
+                        'details': str(e)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Handle boolean fields
+        boolean_fields = ['booking_for_self', 'deposit_required']
+        for field in boolean_fields:
+            if field in data:
+                value = data.get(field)
+                if isinstance(value, str):
+                    data[field] = value.lower() in ['true', '1', 'yes', 'on']
+        
+        # Handle numeric fields
+        numeric_fields = ['base_amount', 'addon_amount', 'discount_amount', 'tax_amount', 'total_amount', 'deposit_percentage', 'deposit_amount', 'duration_minutes']
+        for field in numeric_fields:
+            if field in data:
+                try:
+                    data[field] = float(data.get(field)) if data.get(field) else 0.0
+                except (ValueError, TypeError):
+                    data[field] = 0.0
+        
+        # Convert QueryDict to regular dict to avoid double-list issues
+        if hasattr(data, 'dict'):
+            data_dict = data.dict()
+        else:
+            data_dict = dict(data)
+        
+        # Fix any double-list issues for selected_addons
+        if 'selected_addons' in data_dict and isinstance(data_dict['selected_addons'], list):
+            if len(data_dict['selected_addons']) == 1 and isinstance(data_dict['selected_addons'][0], list):
+                data_dict['selected_addons'] = data_dict['selected_addons'][0]
+        
+        logger.debug(f"🔍 Data type being passed to serializer: {type(data_dict)}")
+        logger.debug(f"🔍 Data content being passed to serializer: {data_dict}")
+        
+        # Create and validate serializer
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=data_dict, partial=True)
+        if serializer.is_valid():
+            booking = serializer.save()
+            logger.info(f"✅ Successfully updated booking {booking.booking_id}")
+            return Response(serializer.data)
+        else:
+            logger.error(f"❌ Booking update failed: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ===================== PAYMENT MANAGEMENT VIEWS =====================

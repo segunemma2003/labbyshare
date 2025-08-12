@@ -7,7 +7,7 @@ from django.contrib.auth.password_validation import validate_password
 from .models import AdminActivity, SystemAlert, SupportTicket, TicketMessage
 from accounts.models import User
 from professionals.models import Professional, ProfessionalAvailability, ProfessionalService
-from bookings.models import Booking, Review, BookingPicture
+from bookings.models import Booking, Review, BookingPicture, BookingAddOn, BookingStatusHistory
 from payments.models import Payment, SavedPaymentMethod
 from services.models import Category, Service, AddOn, RegionalPricing
 from regions.models import Region, RegionalSettings
@@ -240,20 +240,6 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return value
-    
-    def to_internal_value(self, data):
-        """
-        Custom to_internal_value to handle complex data structures
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"AdminProfessionalCreateSerializer.to_internal_value called with data keys: {list(data.keys())}")
-        
-        # Let the serializer handle availability data naturally
-        # The view should convert multipart form data to proper structure
-        logger.debug(f"Processing data with availability: {data.get('availability', [])}")
-        
-        return super().to_internal_value(data)
     
     def create(self, validated_data):
         import logging
@@ -797,16 +783,200 @@ class AdminBookingSerializer(serializers.ModelSerializer):
                 'can_add_after': 6
             }
 
+class AdminBookingCreateSerializer(serializers.ModelSerializer):
+    """
+    Create booking by admin
+    """
+    customer = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(user_type='customer'))
+    professional = serializers.PrimaryKeyRelatedField(queryset=Professional.objects.filter(is_active=True))
+    service = serializers.PrimaryKeyRelatedField(queryset=Service.objects.filter(is_active=True))
+    region = serializers.PrimaryKeyRelatedField(queryset=Region.objects.filter(is_active=True))
+    selected_addons = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True,
+        default=list
+    )
+    
+    def to_internal_value(self, data):
+        """Handle APIClient format conversion for selected_addons"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Handle selected_addons format conversion
+        if 'selected_addons' in data:
+            addons_data = data['selected_addons']
+            logger.debug(f"🔍 AdminBookingCreateSerializer.to_internal_value - selected_addons: {addons_data} (type: {type(addons_data)})")
+            
+            # Handle APIClient format conversion (dictionary with numeric keys)
+            if isinstance(addons_data, dict):
+                # Convert dict values to list
+                addons_list = list(addons_data.values())
+                data = data.copy()
+                data['selected_addons'] = addons_list
+                logger.debug(f"🔍 Converted selected_addons dict to list: {addons_list}")
+        
+        return super().to_internal_value(data)
+    
+    class Meta:
+        model = Booking
+        fields = [
+            'customer', 'professional', 'service', 'region',
+            'booking_for_self', 'recipient_name', 'recipient_phone', 'recipient_email',
+            'scheduled_date', 'scheduled_time', 'duration_minutes',
+            'address_line1', 'address_line2', 'city', 'postal_code', 'location_notes',
+            'base_amount', 'addon_amount', 'discount_amount', 'tax_amount', 'total_amount',
+            'deposit_required', 'deposit_percentage', 'deposit_amount',
+            'customer_notes', 'professional_notes', 'admin_notes',
+            'selected_addons'
+        ]
+    
+    def validate(self, data):
+        """Validate booking data"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"🔍 AdminBookingCreateSerializer.validate received data: {data}")
+        logger.debug(f"🔍 selected_addons in data: {data.get('selected_addons')} (type: {type(data.get('selected_addons'))})")
+        
+        # Check if professional provides the service in the region
+        professional = data.get('professional')
+        service = data.get('service')
+        region = data.get('region')
+        
+        if professional and service and region:
+            try:
+                professional_service = ProfessionalService.objects.get(
+                    professional=professional,
+                    service=service,
+                    region=region
+                )
+            except ProfessionalService.DoesNotExist:
+                raise serializers.ValidationError(
+                    f"Professional {professional.user.get_full_name()} does not provide service {service.name} in region {region.name}"
+                )
+        
+        # Validate scheduled date is not in the past
+        scheduled_date = data.get('scheduled_date')
+        if scheduled_date and scheduled_date < timezone.now().date():
+            raise serializers.ValidationError("Scheduled date cannot be in the past")
+        
+        # Calculate total amount if not provided
+        if 'total_amount' not in data:
+            base_amount = data.get('base_amount', 0)
+            addon_amount = data.get('addon_amount', 0)
+            discount_amount = data.get('discount_amount', 0)
+            tax_amount = data.get('tax_amount', 0)
+            data['total_amount'] = base_amount + addon_amount - discount_amount + tax_amount
+        
+        return data
+    
+    def create(self, validated_data):
+        """Create booking with proper relationships"""
+        selected_addons = validated_data.pop('selected_addons', [])
+        
+        # Create the booking
+        booking = Booking.objects.create(**validated_data)
+        
+        # Create selected addons
+        for addon_id in selected_addons:
+            try:
+                addon = AddOn.objects.get(id=addon_id)
+                BookingAddOn.objects.create(
+                    booking=booking,
+                    addon=addon,
+                    price=addon.price
+                )
+            except AddOn.DoesNotExist:
+                # Log a warning if an addon is not found, but continue
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Add-on with ID {addon_id} not found, skipping.")
+                continue
+        
+        # Create status history entry
+        from bookings.models import BookingStatusHistory
+        BookingStatusHistory.objects.create(
+            booking=booking,
+            previous_status='',  # Use empty string instead of None for new bookings
+            new_status=booking.status,
+            changed_by=self.context['request'].user,
+            reason='Booking created by admin'
+        )
+        
+        return booking
+
+
 class AdminBookingUpdateSerializer(serializers.ModelSerializer):
     """
-    Update booking by admin - FIXED field names
+    Update booking by admin - Enhanced for form_data handling
     """
+    selected_addons = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True
+    )
+    
     class Meta:
         model = Booking
         fields = [
             'status', 'payment_status', 'scheduled_date', 'scheduled_time',
-            'professional_notes', 'admin_notes'  # Fixed: use correct field names
+            'professional_notes', 'admin_notes', 'customer_notes',
+            'address_line1', 'address_line2', 'city', 'postal_code', 'location_notes',
+            'base_amount', 'addon_amount', 'discount_amount', 'tax_amount', 'total_amount',
+            'deposit_required', 'deposit_percentage', 'deposit_amount',
+            'cancelled_by', 'cancelled_at', 'cancellation_reason',
+            'selected_addons'
         ]
+    
+    def validate(self, data):
+        """Validate booking update data"""
+        # Validate scheduled date is not in the past
+        scheduled_date = data.get('scheduled_date')
+        if scheduled_date and scheduled_date < timezone.now().date():
+            raise serializers.ValidationError("Scheduled date cannot be in the past")
+        
+        # Calculate total amount if pricing fields are updated
+        if any(field in data for field in ['base_amount', 'addon_amount', 'discount_amount', 'tax_amount']):
+            base_amount = data.get('base_amount', self.instance.base_amount if self.instance else 0)
+            addon_amount = data.get('addon_amount', self.instance.addon_amount if self.instance else 0)
+            discount_amount = data.get('discount_amount', self.instance.discount_amount if self.instance else 0)
+            tax_amount = data.get('tax_amount', self.instance.tax_amount if self.instance else 0)
+            data['total_amount'] = base_amount + addon_amount - discount_amount + tax_amount
+        
+        return data
+    
+    def update(self, instance, validated_data):
+        """Update booking with proper relationships"""
+        selected_addons = validated_data.pop('selected_addons', None)
+        
+        # Update the booking
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        
+        # Update selected addons if provided
+        if selected_addons is not None:
+            # Clear existing addons
+            instance.selected_addons.all().delete()
+            
+            # Create new addons
+            for addon_id in selected_addons:
+                try:
+                    addon = AddOn.objects.get(id=addon_id)
+                    BookingAddOn.objects.create(
+                        booking=instance,
+                        addon=addon,
+                        price=addon.price
+                    )
+                except AddOn.DoesNotExist:
+                    # Log a warning if an addon is not found, but continue
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Add-on with ID {addon_id} not found, skipping.")
+                    continue
+        
+        return instance
+
 
 # ===================== PAYMENT MANAGEMENT SERIALIZERS =====================
 

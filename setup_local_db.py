@@ -54,7 +54,7 @@ def setup_local_database():
     print("📊 Creating test data...")
     try:
         from regions.models import Region
-        from services.models import Service, Category
+        from services.models import Service, Category, AddOn
         from accounts.models import User
         from professionals.models import Professional
         
@@ -79,13 +79,25 @@ def setup_local_database():
         if not Service.objects.exists():
             service = Service.objects.create(
                 name="Test Service",
-                description="Test service for debugging",
+                description="A test service for debugging",
                 category=Category.objects.first(),
-                base_price=50.00,
+                base_price=100.00,
                 duration_minutes=60,
                 is_active=True
             )
             print(f"✅ Created service: {service.name}")
+        
+        # Create addons
+        if not AddOn.objects.exists():
+            addon = AddOn.objects.create(
+                name="Test Addon",
+                description="A test addon for debugging",
+                region=Region.objects.first(),
+                price=25.00,
+                duration_minutes=15,
+                is_active=True
+            )
+            print(f"✅ Created addon: {addon.name}")
         
         # Create test professional
         if not Professional.objects.exists():
@@ -110,16 +122,38 @@ def setup_local_database():
             
             # Add regions and services
             professional.regions.add(Region.objects.first())
+            professional.services.add(Service.objects.first())
             from professionals.models import ProfessionalService
             ProfessionalService.objects.create(
                 professional=professional,
                 service=Service.objects.first(),
                 region=Region.objects.first(),
-                price=50.00,
+                custom_price=50.00,
                 is_active=True
             )
             
             print(f"✅ Created professional: {professional.user.email}")
+        
+        # Ensure ProfessionalService exists for existing professional
+        if Professional.objects.exists() and Service.objects.exists() and Region.objects.exists():
+            from professionals.models import ProfessionalService
+            if not ProfessionalService.objects.exists():
+                professional = Professional.objects.first()
+                service = Service.objects.first()
+                region = Region.objects.first()
+                
+                # Add services and regions to professional
+                professional.services.add(service)
+                professional.regions.add(region)
+                
+                ProfessionalService.objects.create(
+                    professional=professional,
+                    service=service,
+                    region=region,
+                    custom_price=50.00,
+                    is_active=True
+                )
+                print(f"✅ Created ProfessionalService for {professional.user.email}")
         
         print("✅ Test data created successfully!")
         
