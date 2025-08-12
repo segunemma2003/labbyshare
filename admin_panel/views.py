@@ -521,8 +521,8 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
         # Convert QueryDict to regular dict to avoid nested list issues
         clean_data = {}
         for key, value in data.items():
-            if key in ['regions', 'services'] and isinstance(value, list):
-                # Ensure these are flat lists of IDs
+            if key in ['regions', 'services', 'availability'] and isinstance(value, list):
+                # Ensure these are flat lists of IDs/objects
                 clean_data[key] = value
             else:
                 clean_data[key] = value[0] if isinstance(value, list) and len(value) == 1 else value
