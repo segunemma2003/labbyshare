@@ -463,8 +463,8 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                     if len(services_objects) != len(service_ids):
                         missing_ids = set(service_ids) - set(services_objects.values_list('id', flat=True))
                         logger.warning(f"Some service IDs not found: {missing_ids}")
-                    data['services'] = list(services_objects)
-                    logger.debug(f"Processed services: {[s.id for s in services_objects]}")
+                    data['services'] = service_ids
+                    logger.debug(f"Processed services: {service_ids}")
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error processing services: {e}")
                     return Response({
@@ -486,8 +486,8 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                     if len(regions_objects) != len(region_ids):
                         missing_ids = set(region_ids) - set(regions_objects.values_list('id', flat=True))
                         logger.warning(f"Some region IDs not found: {missing_ids}")
-                    data['regions'] = list(regions_objects)
-                    logger.debug(f"Processed regions: {[r.id for r in regions_objects]}")
+                    data['regions'] = region_ids
+                    logger.debug(f"Processed regions: {region_ids}")
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error processing regions: {e}")
                     return Response({
@@ -506,8 +506,8 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
                 'weekday': data.get(f'availability[{i}][weekday]'),
                 'start_time': data.get(f'availability[{i}][start_time]'),
                 'end_time': data.get(f'availability[{i}][end_time]'),
-                'break_start': data.get(f'availability[{i}][break_start]', ''),
-                'break_end': data.get(f'availability[{i}][break_end]', ''),
+                'break_start': data.get(f'availability[{i}][break_start]') or None,
+                'break_end': data.get(f'availability[{i}][break_end]') or None,
                 'is_active': data.get(f'availability[{i}][is_active]', 'true')
             }
             availability_data.append(availability_item)
@@ -518,12 +518,21 @@ class AdminProfessionalListView(generics.ListCreateAPIView):
             logger.debug(f"Converted {len(availability_data)} availability items for serializer")
             logger.debug(f"Final availability data structure: {availability_data}")
         
+        # Convert QueryDict to regular dict to avoid nested list issues
+        clean_data = {}
+        for key, value in data.items():
+            if key in ['regions', 'services'] and isinstance(value, list):
+                # Ensure these are flat lists of IDs
+                clean_data[key] = value
+            else:
+                clean_data[key] = value[0] if isinstance(value, list) and len(value) == 1 else value
+        
         # Continue with serializer processing
         try:
-            logger.debug(f"🔍 About to create serializer with data keys: {list(data.keys())}")
-            logger.debug(f"🔍 Full data structure: {data}")
+            logger.debug(f"🔍 About to create serializer with data keys: {list(clean_data.keys())}")
+            logger.debug(f"🔍 Clean data structure: {clean_data}")
             
-            serializer = self.get_serializer(data=data)
+            serializer = self.get_serializer(data=clean_data)
             
             logger.debug(f"🔍 Serializer created, checking validity...")
             is_valid = serializer.is_valid()
@@ -774,8 +783,10 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
                                 region_ids = [int(rid) for rid in field_data if rid]
                                 objects = Region.objects.filter(id__in=region_ids, is_active=True)
                             
-                            data[field_name] = list(objects)
-                            logger.debug(f"Processed {field_name}: {[obj.id for obj in objects]}")
+                            data[field_name] = service_ids if field_name == 'services' else region_ids
+                            logger.debug(f"Processed {field_name}: {service_ids if field_name == 'services' else region_ids}")
+                            logger.debug(f"Data type for {field_name}: {type(data[field_name])}")
+                            logger.debug(f"Data content for {field_name}: {data[field_name]}")
                         except (ValueError, TypeError) as e:
                             logger.error(f"Error processing {field_name}: {e}")
                             return Response({
@@ -790,102 +801,133 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             logger.debug(f"🔍 Checking for availability data in request.data keys: {list(data.keys())}")
             logger.debug(f"🔍 Looking for availability[{i}][region_id] in data")
             
-            while f'availability[{i}][region_id]' in data:
-                try:
-                    # Extract all fields for this availability item
-                    availability_fields = {}
-                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
-                    optional_fields = ['break_start', 'break_end', 'is_active']
-                    
-                    # Get required fields
-                    for field in required_fields:
-                        key = f'availability[{i}][{field}]'
-                        if key not in data:
-                            logger.error(f"Missing required field {field} for availability item {i}")
-                            return Response({
-                                'error': f'Missing required field {field} for availability item {i}',
-                                'details': f'Key {key} not found in request data'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                        availability_fields[field] = data[key]
-                    
-                    # Get optional fields
-                    for field in optional_fields:
-                        key = f'availability[{i}][{field}]'
-                        availability_fields[field] = data.get(key, None)
-                    
-                    # Process the fields
-                    region_id = int(availability_fields['region_id'])
-                    weekday = int(availability_fields['weekday'])
-                    
-                    # Process time fields
-                    from datetime import datetime
-                    
-                    def parse_time(time_str):
-                        if not time_str or time_str.strip() == '':
-                            return None
-                        try:
-                            return datetime.strptime(time_str, '%H:%M').time()
-                        except ValueError:
-                            try:
-                                return datetime.strptime(time_str, '%H:%M:%S').time()
-                            except ValueError:
+            # Check if we have any availability data at all
+            has_availability_data = any(key.startswith('availability[') for key in data.keys())
+            logger.debug(f"🔍 Has availability data: {has_availability_data}")
+            
+            if has_availability_data:
+                while f'availability[{i}][region_id]' in data:
+                    try:
+                        # Extract all fields for this availability item
+                        availability_fields = {}
+                        required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                        optional_fields = ['break_start', 'break_end', 'is_active']
+                        
+                        # Get required fields
+                        for field in required_fields:
+                            key = f'availability[{i}][{field}]'
+                            if key not in data:
+                                logger.error(f"Missing required field {field} for availability item {i}")
+                                return Response({
+                                    'error': f'Missing required field {field} for availability item {i}',
+                                    'details': f'Key {key} not found in request data'
+                                }, status=status.HTTP_400_BAD_REQUEST)
+                            availability_fields[field] = data[key]
+                        
+                        # Get optional fields
+                        for field in optional_fields:
+                            key = f'availability[{i}][{field}]'
+                            availability_fields[field] = data.get(key, None)
+                        
+                        # Process the fields
+                        region_id = int(availability_fields['region_id'])
+                        weekday = int(availability_fields['weekday'])
+                        
+                        # Process time fields
+                        from datetime import datetime
+                        
+                        def parse_time(time_str):
+                            if not time_str or time_str.strip() == '':
                                 return None
-                    
-                    start_time = parse_time(availability_fields['start_time'])
-                    end_time = parse_time(availability_fields['end_time'])
-                    break_start = parse_time(availability_fields['break_start'])
-                    break_end = parse_time(availability_fields['break_end'])
-                    
-                    if not start_time or not end_time:
+                            try:
+                                return datetime.strptime(time_str, '%H:%M').time()
+                            except ValueError:
+                                try:
+                                    return datetime.strptime(time_str, '%H:%M:%S').time()
+                                except ValueError:
+                                    return None
+                        
+                        start_time = parse_time(availability_fields['start_time'])
+                        end_time = parse_time(availability_fields['end_time'])
+                        break_start = parse_time(availability_fields.get('break_start')) if availability_fields.get('break_start') else None
+                        break_end = parse_time(availability_fields.get('break_end')) if availability_fields.get('break_end') else None
+                        
+                        if not start_time or not end_time:
+                            return Response({
+                                'error': f'Invalid time format for availability item {i}',
+                                'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                        # Validate time logic
+                        if end_time <= start_time:
+                            return Response({
+                                'error': f'End time must be after start time for availability item {i}',
+                                'details': f'Start: {start_time}, End: {end_time}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                        # Handle is_active
+                        is_active_str = availability_fields.get('is_active', 'true')
+                        if isinstance(is_active_str, str):
+                            is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
+                        else:
+                            is_active = bool(is_active_str)
+                        
+                        availability_item = {
+                            'region_id': region_id,
+                            'weekday': weekday,
+                            'start_time': start_time,
+                            'end_time': end_time,
+                            'break_start': break_start,
+                            'break_end': break_end,
+                            'is_active': is_active
+                        }
+                        
+                        availability_data.append(availability_item)
+                        logger.debug(f"Added availability item {i}: {availability_item}")
+                        
+                    except (ValueError, TypeError, KeyError) as e:
+                        logger.error(f"Error processing availability item {i}: {e}")
                         return Response({
-                            'error': f'Invalid time format for availability item {i}',
-                            'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
+                            'error': f'Invalid availability data for item {i}',
+                            'details': str(e)
                         }, status=status.HTTP_400_BAD_REQUEST)
                     
-                    # Validate time logic
-                    if end_time <= start_time:
-                        return Response({
-                            'error': f'End time must be after start time for availability item {i}',
-                            'details': f'Start: {start_time}, End: {end_time}'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    
-                    # Handle is_active
-                    is_active_str = availability_fields.get('is_active', 'true')
-                    if isinstance(is_active_str, str):
-                        is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
-                    else:
-                        is_active = bool(is_active_str)
-                    
-                    availability_item = {
-                        'region_id': region_id,
-                        'weekday': weekday,
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'break_start': break_start,
-                        'break_end': break_end,
-                        'is_active': is_active
-                    }
-                    
-                    availability_data.append(availability_item)
-                    logger.debug(f"Added availability item {i}: {availability_item}")
-                    
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.error(f"Error processing availability item {i}: {e}")
-                    return Response({
-                        'error': f'Invalid availability data for item {i}',
-                        'details': str(e)
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                i += 1
+                    i += 1
+            else:
+                logger.debug("No availability data found in form_data")
             
             if availability_data:
                 data['availability'] = availability_data
                 logger.debug(f"Processed {len(availability_data)} availability items")
             
             # Create and validate serializer
-            serializer = self.get_serializer(instance, data=data, partial=True)
+            logger.debug(f"🔍 Data type being passed to serializer: {type(data)}")
+            logger.debug(f"🔍 Data content being passed to serializer: {data}")
+            logger.debug(f"🔍 Regions data type: {type(data.get('regions'))}")
+            logger.debug(f"🔍 Regions data content: {data.get('regions')}")
+            logger.debug(f"🔍 Services data type: {type(data.get('services'))}")
+            logger.debug(f"🔍 Services data content: {data.get('services')}")
             
-            logger.debug(f"🔍 Serializer created with data keys: {list(data.keys())}")
+            # Convert QueryDict to regular dict to avoid double-list issues
+            if hasattr(data, 'dict'):
+                data_dict = data.dict()
+            else:
+                data_dict = dict(data)
+            
+            # Fix any double-list issues for regions and services
+            if 'regions' in data_dict and isinstance(data_dict['regions'], list):
+                if data_dict['regions'] and isinstance(data_dict['regions'][0], list):
+                    data_dict['regions'] = data_dict['regions'][0]
+            
+            if 'services' in data_dict and isinstance(data_dict['services'], list):
+                if data_dict['services'] and isinstance(data_dict['services'][0], list):
+                    data_dict['services'] = data_dict['services'][0]
+            
+            logger.debug(f"🔍 Fixed data content: {data_dict}")
+            
+            serializer = self.get_serializer(instance, data=data_dict, partial=True)
+            
+            logger.debug(f"🔍 Serializer created with data keys: {list(data_dict.keys())}")
             
             if not serializer.is_valid():
                 logger.error(f"❌ Serializer validation errors: {serializer.errors}")

@@ -224,7 +224,7 @@ class AdminProfessionalCreateSerializer(serializers.ModelSerializer):
     )
     
     # Availability data
-    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False, allow_empty=True)
     
     class Meta:
         model = Professional
@@ -368,7 +368,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
     )
     
     # Availability data
-    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False)
+    availability = ProfessionalAvailabilityDataSerializer(many=True, required=False, allow_empty=True)
     
     class Meta:
         model = Professional
@@ -394,7 +394,7 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             missing_ids = provided_ids - valid_ids
             raise serializers.ValidationError(f"Invalid region IDs: {list(missing_ids)}")
         
-        return list(valid_regions)
+        return list(valid_regions)  # Return model objects
     
     def validate_services(self, value):
         """Validate that all service IDs exist and are active"""
@@ -410,11 +410,11 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             missing_ids = provided_ids - valid_ids
             raise serializers.ValidationError(f"Invalid service IDs: {list(missing_ids)}")
         
-        return list(valid_services)
+        return list(valid_services)  # Return model objects
     
     def to_internal_value(self, data):
         """
-        Custom to_internal_value to handle complex data structures
+        Custom to_internal_value to handle availability data properly
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -459,7 +459,14 @@ class AdminProfessionalUpdateSerializer(serializers.ModelSerializer):
             data['availability'] = processed_availability
             logger.debug(f"Processed all availability items successfully for update")
         
-        return super().to_internal_value(data)
+        # Remove any form_data availability keys to avoid conflicts
+        cleaned_data = data.copy()
+        keys_to_remove = [key for key in cleaned_data.keys() if key.startswith('availability[')]
+        for key in keys_to_remove:
+            del cleaned_data[key]
+            logger.debug(f"Removed form_data key: {key}")
+        
+        return super().to_internal_value(cleaned_data)
     
     def validate_email(self, value):
         """Validate email uniqueness"""
