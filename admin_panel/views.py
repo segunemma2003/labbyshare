@@ -787,6 +787,9 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             availability_data = []
             i = 0
             
+            logger.debug(f"🔍 Checking for availability data in request.data keys: {list(data.keys())}")
+            logger.debug(f"🔍 Looking for availability[{i}][region_id] in data")
+            
             while f'availability[{i}][region_id]' in data:
                 try:
                     # Extract all fields for this availability item
