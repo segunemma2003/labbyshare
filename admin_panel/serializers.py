@@ -50,69 +50,9 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
         # Create a copy to avoid modifying original data
         processed_data = data.copy()
         
-        def parse_time_field(time_str, field_name):
-            """Parse time string and return time object or None"""
-            if not time_str:
-                return None
-                
-            if isinstance(time_str, time):
-                # Already a time object
-                logger.debug(f"  ✅ {field_name} already a time object: {time_str}")
-                return time_str
-            
-            if not isinstance(time_str, str):
-                time_str = str(time_str)
-            
-            time_str = time_str.strip()
-            if not time_str:
-                return None
-            
-            logger.debug(f"Parsing {field_name}: '{time_str}' (type: {type(time_str)})")
-            
-            # Try different time formats
-            for fmt in ['%H:%M:%S', '%H:%M', '%I:%M %p', '%I:%M:%S %p']:
-                try:
-                    parsed_time = datetime.strptime(time_str, fmt).time()
-                    logger.debug(f"  ✅ Parsed '{time_str}' using format '{fmt}' -> {parsed_time}")
-                    return parsed_time
-                except ValueError:
-                    continue
-            
-            # If no format worked, try manual parsing for HH:MM format
-            if ':' in time_str:
-                try:
-                    parts = time_str.split(':')
-                    if len(parts) == 2:
-                        hours = int(parts[0])
-                        minutes = int(parts[1])
-                        if 0 <= hours <= 23 and 0 <= minutes <= 59:
-                            parsed_time = time(hours, minutes)
-                            logger.debug(f"  ✅ Manual parsed '{time_str}' -> {parsed_time}")
-                            return parsed_time
-                except (ValueError, IndexError):
-                    pass
-            
-            logger.error(f"  ❌ Could not parse {field_name} '{time_str}'")
-            raise serializers.ValidationError(
-                f"Invalid time format for {field_name}: '{time_str}'. Expected formats: HH:MM, HH:MM:SS"
-            )
-        
-        # Parse time fields
-        time_fields = ['start_time', 'end_time', 'break_start', 'break_end']
-        for field in time_fields:
-            if field in processed_data:
-                try:
-                    processed_data[field] = parse_time_field(processed_data[field], field)
-                except serializers.ValidationError:
-                    # Re-raise validation errors
-                    raise
-                except Exception as e:
-                    logger.error(f"Unexpected error parsing {field}: {e}")
-                    raise serializers.ValidationError(
-                        f"Error parsing {field}: {str(e)}"
-                    )
-        
-        logger.debug(f"Processed data: {processed_data}")
+        # Since the view already converts time strings to time objects, 
+        # we just need to pass through the data as-is
+        logger.debug(f"Passing through data as-is: {processed_data}")
         
         # Call parent to_internal_value with processed data
         return super().to_internal_value(processed_data)
