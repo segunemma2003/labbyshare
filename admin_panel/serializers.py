@@ -25,10 +25,10 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
     """
     region_id = serializers.IntegerField()
     weekday = serializers.IntegerField(min_value=0, max_value=6)  # 0=Monday, 6=Sunday
-    start_time = serializers.CharField()  # Changed to CharField to handle string input
-    end_time = serializers.CharField()    # Changed to CharField to handle string input
-    break_start = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    break_end = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    start_time = serializers.TimeField()  # Changed to TimeField to handle time objects
+    end_time = serializers.TimeField()    # Changed to TimeField to handle time objects
+    break_start = serializers.TimeField(required=False, allow_null=True)
+    break_end = serializers.TimeField(required=False, allow_null=True)
     is_active = serializers.BooleanField(default=True)
 
     def to_internal_value(self, data):
