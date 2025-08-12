@@ -806,93 +806,93 @@ class AdminProfessionalDetailView(generics.RetrieveUpdateDestroyAPIView):
             logger.debug(f"🔍 Has availability data: {has_availability_data}")
             
             if has_availability_data:
-            while f'availability[{i}][region_id]' in data:
-                try:
-                    # Extract all fields for this availability item
-                    availability_fields = {}
-                    required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
-                    optional_fields = ['break_start', 'break_end', 'is_active']
-                    
-                    # Get required fields
-                    for field in required_fields:
-                        key = f'availability[{i}][{field}]'
-                        if key not in data:
-                            logger.error(f"Missing required field {field} for availability item {i}")
-                            return Response({
-                                'error': f'Missing required field {field} for availability item {i}',
-                                'details': f'Key {key} not found in request data'
-                            }, status=status.HTTP_400_BAD_REQUEST)
-                        availability_fields[field] = data[key]
-                    
-                    # Get optional fields
-                    for field in optional_fields:
-                        key = f'availability[{i}][{field}]'
-                        availability_fields[field] = data.get(key, None)
-                    
-                    # Process the fields
-                    region_id = int(availability_fields['region_id'])
-                    weekday = int(availability_fields['weekday'])
-                    
-                    # Process time fields
-                    from datetime import datetime
-                    
-                    def parse_time(time_str):
-                        if not time_str or time_str.strip() == '':
-                            return None
-                        try:
-                            return datetime.strptime(time_str, '%H:%M').time()
-                        except ValueError:
-                            try:
-                                return datetime.strptime(time_str, '%H:%M:%S').time()
-                            except ValueError:
+                while f'availability[{i}][region_id]' in data:
+                    try:
+                        # Extract all fields for this availability item
+                        availability_fields = {}
+                        required_fields = ['region_id', 'weekday', 'start_time', 'end_time']
+                        optional_fields = ['break_start', 'break_end', 'is_active']
+                        
+                        # Get required fields
+                        for field in required_fields:
+                            key = f'availability[{i}][{field}]'
+                            if key not in data:
+                                logger.error(f"Missing required field {field} for availability item {i}")
+                                return Response({
+                                    'error': f'Missing required field {field} for availability item {i}',
+                                    'details': f'Key {key} not found in request data'
+                                }, status=status.HTTP_400_BAD_REQUEST)
+                            availability_fields[field] = data[key]
+                        
+                        # Get optional fields
+                        for field in optional_fields:
+                            key = f'availability[{i}][{field}]'
+                            availability_fields[field] = data.get(key, None)
+                        
+                        # Process the fields
+                        region_id = int(availability_fields['region_id'])
+                        weekday = int(availability_fields['weekday'])
+                        
+                        # Process time fields
+                        from datetime import datetime
+                        
+                        def parse_time(time_str):
+                            if not time_str or time_str.strip() == '':
                                 return None
-                    
-                    start_time = parse_time(availability_fields['start_time'])
-                    end_time = parse_time(availability_fields['end_time'])
+                            try:
+                                return datetime.strptime(time_str, '%H:%M').time()
+                            except ValueError:
+                                try:
+                                    return datetime.strptime(time_str, '%H:%M:%S').time()
+                                except ValueError:
+                                    return None
+                        
+                        start_time = parse_time(availability_fields['start_time'])
+                        end_time = parse_time(availability_fields['end_time'])
                         break_start = parse_time(availability_fields.get('break_start')) if availability_fields.get('break_start') else None
                         break_end = parse_time(availability_fields.get('break_end')) if availability_fields.get('break_end') else None
-                    
-                    if not start_time or not end_time:
+                        
+                        if not start_time or not end_time:
+                            return Response({
+                                'error': f'Invalid time format for availability item {i}',
+                                'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                        # Validate time logic
+                        if end_time <= start_time:
+                            return Response({
+                                'error': f'End time must be after start time for availability item {i}',
+                                'details': f'Start: {start_time}, End: {end_time}'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                        # Handle is_active
+                        is_active_str = availability_fields.get('is_active', 'true')
+                        if isinstance(is_active_str, str):
+                            is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
+                        else:
+                            is_active = bool(is_active_str)
+                        
+                        availability_item = {
+                            'region_id': region_id,
+                            'weekday': weekday,
+                            'start_time': start_time,
+                            'end_time': end_time,
+                            'break_start': break_start,
+                            'break_end': break_end,
+                            'is_active': is_active
+                        }
+                        
+                        availability_data.append(availability_item)
+                        logger.debug(f"Added availability item {i}: {availability_item}")
+                        
+                    except (ValueError, TypeError, KeyError) as e:
+                        logger.error(f"Error processing availability item {i}: {e}")
                         return Response({
-                            'error': f'Invalid time format for availability item {i}',
-                            'details': f'start_time: {availability_fields["start_time"]}, end_time: {availability_fields["end_time"]}'
+                            'error': f'Invalid availability data for item {i}',
+                            'details': str(e)
                         }, status=status.HTTP_400_BAD_REQUEST)
                     
-                    # Validate time logic
-                    if end_time <= start_time:
-                        return Response({
-                            'error': f'End time must be after start time for availability item {i}',
-                            'details': f'Start: {start_time}, End: {end_time}'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    
-                    # Handle is_active
-                    is_active_str = availability_fields.get('is_active', 'true')
-                    if isinstance(is_active_str, str):
-                        is_active = is_active_str.lower() in ['true', '1', 'yes', 'on']
-                    else:
-                        is_active = bool(is_active_str)
-                    
-                    availability_item = {
-                        'region_id': region_id,
-                        'weekday': weekday,
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'break_start': break_start,
-                        'break_end': break_end,
-                        'is_active': is_active
-                    }
-                    
-                    availability_data.append(availability_item)
-                    logger.debug(f"Added availability item {i}: {availability_item}")
-                    
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.error(f"Error processing availability item {i}: {e}")
-                    return Response({
-                        'error': f'Invalid availability data for item {i}',
-                        'details': str(e)
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                i += 1
+                    i += 1
             else:
                 logger.debug("No availability data found in form_data")
             
@@ -1294,7 +1294,7 @@ class AdminAddOnListView(generics.ListCreateAPIView):
     permission_classes = [IsAdminUser]
     serializer_class = AdminAddOnSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['region', 'is_active', 'is_featured']
+    filterset_fields = ['region', 'is_active']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'price', 'created_at']
     ordering = ['name']
