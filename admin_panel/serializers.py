@@ -67,7 +67,11 @@ class ProfessionalAvailabilityDataSerializer(serializers.Serializer):
         start_time = attrs.get('start_time')
         end_time = attrs.get('end_time')
         
+        logger.debug(f"start_time: {start_time} (type: {type(start_time)})")
+        logger.debug(f"end_time: {end_time} (type: {type(end_time)})")
+        
         if not start_time or not end_time:
+            logger.error(f"Missing time fields: start_time={start_time}, end_time={end_time}")
             raise serializers.ValidationError("Both start_time and end_time are required")
         
         if end_time <= start_time:
