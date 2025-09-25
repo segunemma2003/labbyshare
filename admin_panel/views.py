@@ -1555,7 +1555,11 @@ class AdminBookingDetailView(generics.RetrieveUpdateDestroyAPIView):
         if serializer.is_valid():
             booking = serializer.save()
             logger.info(f"✅ Successfully updated booking {booking.booking_id}")
-            return Response(serializer.data)
+            
+            # Use AdminBookingSerializer for the response to avoid RelatedManager issues
+            from admin_panel.serializers import AdminBookingSerializer
+            response_serializer = AdminBookingSerializer(booking, context=self.get_serializer_context())
+            return Response(response_serializer.data)
         else:
             logger.error(f"❌ Booking update failed: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
