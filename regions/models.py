@@ -2,6 +2,7 @@
 from django.db import models
 from django.core.cache import cache
 from django.conf import settings
+from decimal import Decimal
 
 
 class RegionManager(models.Manager):
@@ -43,7 +44,7 @@ class Region(models.Model):
     
     # Operational settings
     is_active = models.BooleanField(default=True, db_index=True)
-    default_tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=0.0000)
+    default_tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
     
     # Business hours (default for the region)
     business_start_time = models.TimeField(default='09:00:00')

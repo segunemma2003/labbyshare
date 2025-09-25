@@ -152,13 +152,13 @@ class Booking(models.Model):
     deposit_percentage = models.DecimalField(
         max_digits=5, 
         decimal_places=2, 
-        default=20.00,
+        default=Decimal('20.00'),
         validators=[MinValueValidator(Decimal('0.00'))]
     )
     deposit_amount = models.DecimalField(
         max_digits=10, 
         decimal_places=2, 
-        default=0,
+        default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))]
     )
     
