@@ -884,7 +884,8 @@ class AdminBookingCreateSerializer(serializers.ModelSerializer):
                 BookingAddOn.objects.create(
                     booking=booking,
                     addon=addon,
-                    price=addon.price
+                    quantity=1,
+                    price_at_booking=addon.price
                 )
             except AddOn.DoesNotExist:
                 # Log a warning if an addon is not found, but continue
@@ -966,7 +967,8 @@ class AdminBookingUpdateSerializer(serializers.ModelSerializer):
                     BookingAddOn.objects.create(
                         booking=instance,
                         addon=addon,
-                        price=addon.price
+                        quantity=1,
+                        price_at_booking=addon.price
                     )
                 except AddOn.DoesNotExist:
                     # Log a warning if an addon is not found, but continue

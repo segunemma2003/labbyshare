@@ -1419,6 +1419,7 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
     """
     permission_classes = [IsAdminUser]
     serializer_class = AdminBookingUpdateSerializer
+    lookup_field = 'booking_id'
     queryset = Booking.objects.select_related(
         'customer', 'professional', 'professional__user', 'service', 'region'
     ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
@@ -1533,6 +1534,7 @@ class AdminPaymentDetailView(generics.RetrieveAPIView):
     """
     permission_classes = [IsAdminUser]
     serializer_class = AdminPaymentSerializer
+    lookup_field = 'payment_id'
     queryset = Payment.objects.select_related('customer', 'booking', 'booking__region')
 
 
