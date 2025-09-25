@@ -1427,11 +1427,16 @@ class AdminBookingDetailView(generics.RetrieveUpdateDestroyAPIView):
     Get, update, or delete booking (admin)
     """
     permission_classes = [IsAdminUser]
-    serializer_class = AdminBookingUpdateSerializer
     lookup_field = 'booking_id'
     queryset = Booking.objects.select_related(
         'customer', 'professional', 'professional__user', 'service', 'region'
     ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+    
+    def get_serializer_class(self):
+        """Use different serializers for different operations"""
+        if self.request.method in ['PUT', 'PATCH']:
+            return AdminBookingUpdateSerializer
+        return AdminBookingSerializer
     
     def perform_destroy(self, instance):
         """
