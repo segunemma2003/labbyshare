@@ -686,10 +686,10 @@ class AdminBookingSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source='service.name', read_only=True)
     region_name = serializers.CharField(source='region.name', read_only=True)
     recipient = serializers.SerializerMethodField()
-    selected_addons = BookingAddOnSerializer(many=True, read_only=True)
+    selected_addons = serializers.SerializerMethodField()
     review = ReviewSerializer(read_only=True)
-    reschedule_requests = BookingRescheduleSerializer(many=True, read_only=True)
-    messages = BookingMessageSerializer(many=True, read_only=True)
+    reschedule_requests = serializers.SerializerMethodField()
+    messages = serializers.SerializerMethodField()
     status_history = serializers.SerializerMethodField()
     
     # Before and after pictures
@@ -723,6 +723,25 @@ class AdminBookingSerializer(serializers.ModelSerializer):
                 'profile_picture': user.profile_picture.url if user.profile_picture else None
             }
         return None
+    
+    def get_selected_addons(self, obj):
+        """Get selected addons for the booking"""
+        from bookings.serializers import BookingAddOnSerializer
+        addons = obj.selected_addons.all()
+        return BookingAddOnSerializer(addons, many=True, context=self.context).data
+    
+    def get_reschedule_requests(self, obj):
+        """Get reschedule requests for the booking"""
+        from bookings.serializers import BookingRescheduleSerializer
+        requests = obj.reschedule_requests.all()
+        return BookingRescheduleSerializer(requests, many=True, context=self.context).data
+    
+    def get_messages(self, obj):
+        """Get messages for the booking"""
+        from bookings.serializers import BookingMessageSerializer
+        messages = obj.messages.all()
+        return BookingMessageSerializer(messages, many=True, context=self.context).data
+    
     def get_recipient(self, obj):
         if not obj.booking_for_self:
             return {

@@ -1331,9 +1331,18 @@ class AdminBookingListView(generics.ListCreateAPIView):
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Booking.objects.none()
-        return Booking.objects.select_related(
+        
+        # Get base queryset
+        queryset = Booking.objects.select_related(
             'customer', 'professional', 'professional__user', 'service', 'region'
         ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+        
+        # Filter out cancelled bookings by default unless explicitly requested
+        include_cancelled = self.request.query_params.get('include_cancelled', 'false').lower() == 'true'
+        if not include_cancelled:
+            queryset = queryset.exclude(status='cancelled')
+        
+        return queryset
     
     def get_serializer_class(self):
         """Use different serializers for different operations"""
@@ -1413,9 +1422,9 @@ class AdminBookingListView(generics.ListCreateAPIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
+class AdminBookingDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
-    Get and update booking (admin)
+    Get, update, or delete booking (admin)
     """
     permission_classes = [IsAdminUser]
     serializer_class = AdminBookingUpdateSerializer
@@ -1423,6 +1432,45 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
     queryset = Booking.objects.select_related(
         'customer', 'professional', 'professional__user', 'service', 'region'
     ).prefetch_related('selected_addons', 'review', 'reschedule_requests', 'messages')
+    
+    def perform_destroy(self, instance):
+        """
+        Soft delete booking by marking it as cancelled
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Log the deletion attempt
+        from admin_panel.models import AdminActivity
+        AdminActivity.objects.create(
+            admin_user=self.request.user,
+            activity_type='booking_action',
+            description=f"Admin deleted booking: {instance.booking_id}",
+            target_model='Booking',
+            target_id=str(instance.booking_id)
+        )
+        
+        # Store previous status before changing
+        previous_status = instance.status
+        
+        # Mark booking as cancelled instead of hard delete
+        instance.status = 'cancelled'
+        instance.cancelled_by = self.request.user
+        instance.cancelled_at = timezone.now()
+        instance.cancellation_reason = 'Deleted by admin'
+        instance.save()
+        
+        # Create status history
+        from bookings.models import BookingStatusHistory
+        BookingStatusHistory.objects.create(
+            booking=instance,
+            previous_status=previous_status,
+            new_status='cancelled',
+            changed_by=self.request.user,
+            reason='Deleted by admin'
+        )
+        
+        logger.info(f"Admin {self.request.user.email} soft-deleted booking {instance.booking_id}")
     
     def update(self, request, *args, **kwargs):
         """Handle booking update with form_data support"""
