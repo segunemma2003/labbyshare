@@ -42,6 +42,7 @@ urlpatterns = [
     path('bookings/<uuid:booking_id>/', views.AdminBookingDetailView.as_view(), name='admin_booking_detail'),
     path('bookings/update-status/', views.update_booking_status, name='update_booking_status'),
     path('bookings/handle-reschedule/', views.handle_reschedule_request, name='handle_reschedule_request'),
+    path('bookings/upload-pictures/', views.upload_booking_pictures, name='upload_booking_pictures'),
     
     # ===================== PAYMENT MANAGEMENT =====================
     path('payments/', views.AdminPaymentListView.as_view(), name='admin_payments'),

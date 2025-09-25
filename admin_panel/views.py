@@ -1958,6 +1958,143 @@ def debug_info(request):
     })
 
 
+# ===================== BOOKING PICTURE UPLOAD =====================
+
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+@swagger_auto_schema(
+    operation_description="Upload booking pictures (admin only)",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['booking_id', 'picture_type', 'images'],
+        properties={
+            'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid', description='Booking UUID'),
+            'picture_type': openapi.Schema(type=openapi.TYPE_STRING, enum=['before', 'after'], description='Type of picture'),
+            'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_FILE), description='Image files (1-6 files)'),
+            'captions': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING), description='Optional captions for images'),
+        }
+    ),
+    responses={
+        200: 'Pictures uploaded successfully',
+        400: 'Validation error',
+        404: 'Booking not found'
+    }
+)
+def upload_booking_pictures(request):
+    """
+    Upload before/after pictures for a booking (admin only)
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get booking
+        booking_id = request.data.get('booking_id')
+        if not booking_id:
+            return Response(
+                {'error': 'booking_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {'error': 'Booking not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get picture type
+        picture_type = request.data.get('picture_type')
+        if picture_type not in ['before', 'after']:
+            return Response(
+                {'error': 'picture_type must be "before" or "after"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get images from request
+        images = request.FILES.getlist('images')
+        if not images:
+            return Response(
+                {'error': 'At least one image is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(images) > 6:
+            return Response(
+                {'error': 'Maximum 6 images allowed per upload'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check existing picture count
+        existing_count = booking.pictures.filter(picture_type=picture_type).count()
+        if existing_count + len(images) > 6:
+            return Response(
+                {'error': f'Maximum 6 {picture_type} pictures allowed. Currently have {existing_count}, trying to add {len(images)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get captions if provided
+        captions = request.data.getlist('captions') if 'captions' in request.data else []
+        
+        # Validate captions count matches images count
+        if captions and len(captions) != len(images):
+            return Response(
+                {'error': 'Number of captions must match number of images'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Upload pictures
+        uploaded_pictures = []
+        from bookings.models import BookingPicture
+        
+        for i, image in enumerate(images):
+            try:
+                # Validate image
+                if image.size > 10 * 1024 * 1024:  # 10MB limit
+                    return Response(
+                        {'error': f'Image {i+1} is too large. Maximum size is 10MB'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Create booking picture
+                picture = BookingPicture.objects.create(
+                    booking=booking,
+                    picture_type=picture_type,
+                    image=image,
+                    caption=captions[i] if i < len(captions) else '',
+                    uploaded_by=request.user
+                )
+                
+                uploaded_pictures.append(picture)
+                logger.info(f"Uploaded {picture_type} picture {i+1} for booking {booking_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to upload image {i+1}: {str(e)}")
+                return Response(
+                    {'error': f'Failed to upload image {i+1}: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        # Serialize uploaded pictures
+        from bookings.serializers import BookingPictureSerializer
+        serializer = BookingPictureSerializer(uploaded_pictures, many=True, context={'request': request})
+        
+        return Response({
+            'message': f'Successfully uploaded {len(uploaded_pictures)} {picture_type} picture(s)',
+            'uploaded_pictures': serializer.data,
+            'booking_id': str(booking_id),
+            'picture_type': picture_type
+        })
+        
+    except Exception as e:
+        logger.error(f"Upload booking pictures error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 # ===================== MISSING API FUNCTIONS =====================
 
 @api_view(['POST'])
