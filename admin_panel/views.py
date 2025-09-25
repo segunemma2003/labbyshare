@@ -1960,29 +1960,33 @@ def debug_info(request):
 
 # ===================== BOOKING PICTURE UPLOAD =====================
 
-@api_view(['POST'])
+@api_view(['POST', 'PUT', 'DELETE'])
 @permission_classes([IsAdminUser])
 @swagger_auto_schema(
-    operation_description="Upload booking pictures (admin only)",
+    operation_description="Upload, update, or delete booking pictures (admin only)",
     request_body=openapi.Schema(
         type=openapi.TYPE_OBJECT,
-        required=['booking_id', 'picture_type', 'images'],
+        required=['booking_id', 'picture_type'],
         properties={
             'booking_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid', description='Booking UUID'),
             'picture_type': openapi.Schema(type=openapi.TYPE_STRING, enum=['before', 'after'], description='Type of picture'),
-            'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_FILE), description='Image files (1-6 files)'),
+            'images': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_FILE), description='Image files (1-6 files) - for POST'),
             'captions': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_STRING), description='Optional captions for images'),
+            'picture_ids': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_INTEGER), description='Picture IDs to delete - for DELETE'),
+            'picture_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='Picture ID to update - for PUT'),
+            'new_caption': openapi.Schema(type=openapi.TYPE_STRING, description='New caption for update - for PUT'),
+            'new_image': openapi.Schema(type=openapi.TYPE_FILE, description='New image file for update - for PUT'),
         }
     ),
     responses={
-        200: 'Pictures uploaded successfully',
+        200: 'Operation completed successfully',
         400: 'Validation error',
-        404: 'Booking not found'
+        404: 'Booking or picture not found'
     }
 )
 def upload_booking_pictures(request):
     """
-    Upload before/after pictures for a booking (admin only)
+    Upload, update, or delete before/after pictures for a booking (admin only)
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -2012,83 +2016,177 @@ def upload_booking_pictures(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get images from request
-        images = request.FILES.getlist('images')
-        if not images:
-            return Response(
-                {'error': 'At least one image is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if len(images) > 6:
-            return Response(
-                {'error': 'Maximum 6 images allowed per upload'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check existing picture count
-        existing_count = booking.pictures.filter(picture_type=picture_type).count()
-        if existing_count + len(images) > 6:
-            return Response(
-                {'error': f'Maximum 6 {picture_type} pictures allowed. Currently have {existing_count}, trying to add {len(images)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get captions if provided
-        captions = request.data.getlist('captions') if 'captions' in request.data else []
-        
-        # Validate captions count matches images count
-        if captions and len(captions) != len(images):
-            return Response(
-                {'error': 'Number of captions must match number of images'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Upload pictures
-        uploaded_pictures = []
         from bookings.models import BookingPicture
+        from bookings.serializers import BookingPictureSerializer
         
-        for i, image in enumerate(images):
-            try:
-                # Validate image
-                if image.size > 10 * 1024 * 1024:  # 10MB limit
+        # Handle different HTTP methods
+        if request.method == 'POST':
+            # UPLOAD NEW PICTURES
+            images = request.FILES.getlist('images')
+            if not images:
+                return Response(
+                    {'error': 'At least one image is required for upload'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if len(images) > 6:
+                return Response(
+                    {'error': 'Maximum 6 images allowed per upload'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check existing picture count
+            existing_count = booking.pictures.filter(picture_type=picture_type).count()
+            if existing_count + len(images) > 6:
+                return Response(
+                    {'error': f'Maximum 6 {picture_type} pictures allowed. Currently have {existing_count}, trying to add {len(images)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get captions if provided
+            captions = request.data.getlist('captions') if 'captions' in request.data else []
+            
+            # Validate captions count matches images count
+            if captions and len(captions) != len(images):
+                return Response(
+                    {'error': 'Number of captions must match number of images'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Upload pictures
+            uploaded_pictures = []
+            
+            for i, image in enumerate(images):
+                try:
+                    # Validate image
+                    if image.size > 10 * 1024 * 1024:  # 10MB limit
+                        return Response(
+                            {'error': f'Image {i+1} is too large. Maximum size is 10MB'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Create booking picture
+                    picture = BookingPicture.objects.create(
+                        booking=booking,
+                        picture_type=picture_type,
+                        image=image,
+                        caption=captions[i] if i < len(captions) else '',
+                        uploaded_by=request.user
+                    )
+                    
+                    uploaded_pictures.append(picture)
+                    logger.info(f"Uploaded {picture_type} picture {i+1} for booking {booking_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to upload image {i+1}: {str(e)}")
                     return Response(
-                        {'error': f'Image {i+1} is too large. Maximum size is 10MB'},
+                        {'error': f'Failed to upload image {i+1}: {str(e)}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+            
+            # Serialize uploaded pictures
+            serializer = BookingPictureSerializer(uploaded_pictures, many=True, context={'request': request})
+            
+            return Response({
+                'message': f'Successfully uploaded {len(uploaded_pictures)} {picture_type} picture(s)',
+                'uploaded_pictures': serializer.data,
+                'booking_id': str(booking_id),
+                'picture_type': picture_type
+            })
+        
+        elif request.method == 'PUT':
+            # UPDATE EXISTING PICTURE
+            picture_id = request.data.get('picture_id')
+            if not picture_id:
+                return Response(
+                    {'error': 'picture_id is required for update'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                picture = BookingPicture.objects.get(
+                    id=picture_id,
+                    booking=booking,
+                    picture_type=picture_type
+                )
+            except BookingPicture.DoesNotExist:
+                return Response(
+                    {'error': 'Picture not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Update caption if provided
+            new_caption = request.data.get('new_caption')
+            if new_caption is not None:
+                picture.caption = new_caption
+            
+            # Update image if provided
+            new_image = request.FILES.get('new_image')
+            if new_image:
+                # Validate new image
+                if new_image.size > 10 * 1024 * 1024:  # 10MB limit
+                    return Response(
+                        {'error': 'New image is too large. Maximum size is 10MB'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-                
-                # Create booking picture
-                picture = BookingPicture.objects.create(
-                    booking=booking,
-                    picture_type=picture_type,
-                    image=image,
-                    caption=captions[i] if i < len(captions) else '',
-                    uploaded_by=request.user
-                )
-                
-                uploaded_pictures.append(picture)
-                logger.info(f"Uploaded {picture_type} picture {i+1} for booking {booking_id}")
-                
-            except Exception as e:
-                logger.error(f"Failed to upload image {i+1}: {str(e)}")
+                picture.image = new_image
+            
+            picture.save()
+            
+            # Serialize updated picture
+            serializer = BookingPictureSerializer(picture, context={'request': request})
+            
+            return Response({
+                'message': f'Successfully updated {picture_type} picture',
+                'updated_picture': serializer.data,
+                'booking_id': str(booking_id),
+                'picture_type': picture_type
+            })
+        
+        elif request.method == 'DELETE':
+            # DELETE PICTURES
+            picture_ids = request.data.get('picture_ids', [])
+            if not picture_ids:
                 return Response(
-                    {'error': f'Failed to upload image {i+1}: {str(e)}'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {'error': 'picture_ids is required for deletion'},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-        
-        # Serialize uploaded pictures
-        from bookings.serializers import BookingPictureSerializer
-        serializer = BookingPictureSerializer(uploaded_pictures, many=True, context={'request': request})
-        
-        return Response({
-            'message': f'Successfully uploaded {len(uploaded_pictures)} {picture_type} picture(s)',
-            'uploaded_pictures': serializer.data,
-            'booking_id': str(booking_id),
-            'picture_type': picture_type
-        })
+            
+            # Convert to list if single ID provided
+            if isinstance(picture_ids, int):
+                picture_ids = [picture_ids]
+            
+            deleted_pictures = []
+            not_found_ids = []
+            
+            for picture_id in picture_ids:
+                try:
+                    picture = BookingPicture.objects.get(
+                        id=picture_id,
+                        booking=booking,
+                        picture_type=picture_type
+                    )
+                    deleted_pictures.append(picture)
+                    picture.delete()
+                    logger.info(f"Deleted {picture_type} picture {picture_id} for booking {booking_id}")
+                except BookingPicture.DoesNotExist:
+                    not_found_ids.append(picture_id)
+            
+            response_data = {
+                'message': f'Successfully deleted {len(deleted_pictures)} {picture_type} picture(s)',
+                'deleted_count': len(deleted_pictures),
+                'booking_id': str(booking_id),
+                'picture_type': picture_type
+            }
+            
+            if not_found_ids:
+                response_data['not_found_ids'] = not_found_ids
+                response_data['warning'] = f'Some pictures not found: {not_found_ids}'
+            
+            return Response(response_data)
         
     except Exception as e:
-        logger.error(f"Upload booking pictures error: {str(e)}")
+        logger.error(f"Booking pictures operation error: {str(e)}")
         return Response(
             {'error': 'Internal server error'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
