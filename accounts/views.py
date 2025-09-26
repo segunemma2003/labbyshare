@@ -11,6 +11,9 @@ from django.utils import timezone
 from datetime import timedelta
 import random
 import string
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import User, OTPVerification
 from .serializers import (
@@ -25,7 +28,7 @@ from .serializers import (
     ResetPasswordSerializer
 )
 from regions.models import Region
-from .tasks import send_otp_email
+from .tasks import send_otp_email, send_otp_email_sync
 
 
 class RegisterThrottle(AnonRateThrottle):
@@ -503,7 +506,7 @@ def forgot_password(request):
                 expires_at=expires_at
             )
             
-            # Send email asynchronously
+            # Send email asynchronously (same logic as registration)
             send_otp_email.delay(email, otp, 'password_reset')
             
             return Response(
@@ -519,6 +522,47 @@ def forgot_password(request):
             )
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def test_email(request):
+    """
+    Test email functionality for debugging
+    """
+    email = request.data.get('email', 'test@example.com')
+    
+    try:
+        # Send test OTP using the same logic as password reset
+        from .models import OTPVerification
+        
+        otp = ''.join(random.choices(string.digits, k=6))
+        expires_at = timezone.now() + timedelta(minutes=10)
+        
+        # Delete any existing OTPs for this email and purpose
+        OTPVerification.objects.filter(
+            email=email,
+            purpose='password_reset'
+        ).delete()
+        
+        OTPVerification.objects.create(
+            email=email,
+            otp=otp,
+            purpose='password_reset',
+            expires_at=expires_at
+        )
+        
+        # Use same method as forgot password
+        send_otp_email.delay(email, otp, 'password_reset')
+        
+        return Response({
+            'message': 'Test OTP email sent successfully (using same method as forgot password)'
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Test email failed: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])

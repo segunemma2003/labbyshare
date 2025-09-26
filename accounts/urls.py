@@ -18,6 +18,7 @@ urlpatterns = [
     path('forgot-password/', views.forgot_password, name='forgot_password'),
     path('verify-reset-otp/', views.verify_reset_otp, name='verify_reset_otp'),
     path('reset-password/', views.reset_password, name='reset_password'),
+    path('test-email/', views.test_email, name='test_email'),  # Debug endpoint
     
     # Region management
     path('switch-region/', views.switch_region, name='switch_region'),
