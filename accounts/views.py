@@ -594,8 +594,30 @@ def reset_password(request):
             
             # Get user and update password
             user = User.objects.get(email=email)
-            user.set_password(new_password)
-            user.save()
+            
+            # Set and save password with proper validation
+            try:
+                user.set_password(new_password)
+                user.save(update_fields=['password'])
+                logger.info(f"Password updated for user {email}")
+                
+                # Refresh user from database and verify password 
+                user.refresh_from_db()
+                if user.check_password(new_password):
+                    logger.info(f"Password verification successful for user {email}")
+                else:
+                    logger.error(f"Password verification failed for user {email}")
+                    return Response(
+                        {'error': 'Password reset failed. Please try again.'}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Error setting password for user {email}: {str(e)}")
+                return Response(
+                    {'error': 'Password reset failed. Please try again.'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
             # Mark OTP as used
             otp_verification.used = True
@@ -607,6 +629,8 @@ def reset_password(request):
             # Clear user cache
             cache_key = settings.CACHE_KEYS['USER_PROFILE'].format(user.id)
             cache.delete(cache_key)
+            
+            logger.info(f"Password successfully reset for user {email}")
             
             return Response(
                 {'message': 'Password reset successful'}, 
