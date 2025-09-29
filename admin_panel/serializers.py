@@ -126,7 +126,12 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
     """
     Create user by admin
     """
-    password = serializers.CharField(write_only=True, validators=[validate_password])
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        help_text="Optional. Defaults to Password@12345 if omitted."
+    )
     profile_picture = serializers.ImageField(required=False, allow_null=True)
     
     class Meta:
@@ -143,7 +148,8 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
         return value
     
     def create(self, validated_data):
-        password = validated_data.pop('password')
+        # Use provided password or default for admin-created professionals
+        password = validated_data.pop('password', None) or 'Password@12345'
         user = User.objects.create_user(
             username=validated_data['email'],
             **validated_data

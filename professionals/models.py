@@ -19,7 +19,8 @@ class ProfessionalManager(models.Manager):
         if service:
             queryset = queryset.filter(services=service)
         
-        return queryset.select_related('user').prefetch_related('regions', 'services')
+        # Ensure no duplicates when joining through M2M (regions/services)
+        return queryset.select_related('user').prefetch_related('regions', 'services').distinct()
     
     def get_top_rated(self, region=None, limit=10):
         """Get top rated professionals"""

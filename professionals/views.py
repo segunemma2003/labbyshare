@@ -66,9 +66,13 @@ class ProfessionalListView(generics.ListAPIView):
         if not region:
             return Professional.objects.none()
         
-        return Professional.objects.get_active_professionals(region).select_related(
-            'user'
-        ).prefetch_related('regions', 'services')
+        return (
+            Professional.objects
+            .get_active_professionals(region)
+            .select_related('user')
+            .prefetch_related('regions', 'services')
+            .distinct()
+        )
 
 
 class ProfessionalDetailView(generics.RetrieveAPIView):
