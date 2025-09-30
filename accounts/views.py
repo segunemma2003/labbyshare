@@ -598,20 +598,20 @@ def reset_password(request):
             # Set and save password with proper validation
             try:
                 user.set_password(new_password)
-                    user.save(update_fields=['password'])
-                    logger.info(f"Password updated for user {email}")
-                    
-                    # Refresh user from database and verify password 
-                    user.refresh_from_db()
-                    if user.check_password(new_password):
-                        logger.info(f"Password verification successful for user {email}")
-                    else:
-                        logger.error(f"Password verification failed for user {email}")
-                        return Response(
-                            {'error': 'Password reset failed. Please try again.'}, 
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                        )
-                    
+                user.save(update_fields=['password'])
+                logger.info(f"Password updated for user {email}")
+                
+                # Refresh user from database and verify password 
+                user.refresh_from_db()
+                if user.check_password(new_password):
+                    logger.info(f"Password verification successful for user {email}")
+                else:
+                    logger.error(f"Password verification failed for user {email}")
+                    return Response(
+                        {'error': 'Password reset failed. Please try again.'}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                
             except Exception as e:
                 logger.error(f"Error setting password for user {email}: {str(e)}")
                 return Response(
