@@ -28,6 +28,7 @@ class ProfessionalManager(models.Manager):
         return queryset.filter(rating__gte=4.0).order_by('-rating', '-total_reviews')[:limit]
 
 
+
 class Professional(models.Model):
     """
     Professional service provider model
