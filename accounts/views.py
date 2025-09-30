@@ -597,7 +597,7 @@ def reset_password(request):
             
             # Set and save password with proper validation
             try:
-                user.set_password(new_password)
+            user.set_password(new_password)
                 user.save(update_fields=['password'])
                 logger.info(f"Password updated for user {email}")
                 
