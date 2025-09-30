@@ -10,7 +10,7 @@ class ProfessionalManager(models.Manager):
     Custom manager for professionals with region-based queries
     """
     def get_active_professionals(self, region=None, service=None):
-        """Get active verified professionals"""
+        """Get active verified professionals with complete schedule configuration"""
         queryset = self.filter(is_active=True, is_verified=True)
         
         if region:
@@ -19,12 +19,25 @@ class ProfessionalManager(models.Manager):
         if service:
             queryset = queryset.filter(services=service)
         
+        # Only include professionals who have BOTH availability and non-availability schedules
+        # This ensures they have properly configured their schedule
+        queryset = queryset.filter(
+            availability_schedule__isnull=False,
+            unavailable_dates__isnull=False
+        ).distinct()
+        
         # Ensure no duplicates when joining through M2M (regions/services)
         return queryset.select_related('user').prefetch_related('regions', 'services').distinct()
     
     def get_top_rated(self, region=None, limit=10):
-        """Get top rated professionals"""
+        """Get top rated professionals with complete schedule configuration"""
         queryset = self.get_active_professionals(region)
+        # Additional filtering for specific region availability if needed
+        if region:
+            queryset = queryset.filter(
+                availability_schedule__region=region,
+                availability_schedule__is_active=True
+            ).distinct()
         return queryset.filter(rating__gte=4.0).order_by('-rating', '-total_reviews')[:limit]
 
 
@@ -120,6 +133,23 @@ class Professional(models.Model):
             self.total_reviews = 0
         
         self.save(update_fields=['rating', 'total_reviews'])
+    
+    def has_complete_schedule_configuration(self, region=None):
+        """
+        Check if professional has both availability and non-availability schedules
+        This indicates they have properly configured their schedule
+        """
+        has_availability = self.availability_schedule.filter(is_active=True).exists()
+        has_unavailability = self.unavailable_dates.exists()
+        
+        if region:
+            has_availability = self.availability_schedule.filter(
+                region=region, 
+                is_active=True
+            ).exists()
+            has_unavailability = self.unavailable_dates.filter(region=region).exists()
+        
+        return has_availability and has_unavailability
     
     def get_availability_for_date(self, date, region):
         """Get availability slots for specific date"""

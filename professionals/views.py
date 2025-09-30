@@ -549,7 +549,10 @@ def search_professionals(request):
             except Service.DoesNotExist:
                 pass
     
-    # Filter by availability if date/time specified
+    # get_active_professionals() already filters for complete schedule configuration
+    # (both availability and non-availability schedules)
+    
+    # Filter by specific availability if date/time specified
     if date_str and time_str and service_id:
         try:
             date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -558,7 +561,7 @@ def search_professionals(request):
             from services.models import Service
             service = Service.objects.get(id=service_id)
             
-            # Filter professionals who are available
+            # Filter professionals who are available for specific date/time
             available_professionals = []
             for professional in queryset:
                 if professional.is_available(date, time, service.duration_minutes, region):
