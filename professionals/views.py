@@ -322,6 +322,12 @@ class DocumentUploadView(generics.ListCreateAPIView):
             required=True
         ),
         openapi.Parameter(
+            'region_id', openapi.IN_QUERY,
+            description="Region ID to filter availability",
+            type=openapi.TYPE_INTEGER,
+            required=True
+        ),
+        openapi.Parameter(
             'date', openapi.IN_QUERY,
             description="Date (YYYY-MM-DD)",
             type=openapi.TYPE_STRING,
@@ -349,14 +355,15 @@ def get_available_slots(request):
     """
     professional_id = request.GET.get('professional_id')
     service_id = request.GET.get('service_id')
+    region_id = request.GET.get('region_id')
     date_str = request.GET.get('date')
     start_date_str = request.GET.get('start_date')
     end_date_str = request.GET.get('end_date')
 
     # Validate required params
-    if not all([professional_id, service_id]):
+    if not all([professional_id, service_id, region_id]):
         return Response(
-            {'error': 'professional_id and service_id are required'},
+            {'error': 'professional_id, service_id, and region_id are required'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -364,7 +371,16 @@ def get_available_slots(request):
         professional = Professional.objects.get(id=professional_id, is_active=True)
         from services.models import Service
         service = Service.objects.get(id=service_id)
-    except (Professional.DoesNotExist, Service.DoesNotExist):
+        from regions.models import Region
+        region = Region.objects.get(id=region_id)
+        
+        # Check if professional serves this region
+        if not professional.regions.filter(id=region_id).exists():
+            return Response(
+                {'error': 'Professional does not serve this region'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    except (Professional.DoesNotExist, Service.DoesNotExist, Region.DoesNotExist):
         return Response(
             {'error': 'Invalid parameters'},
             status=status.HTTP_400_BAD_REQUEST
@@ -373,6 +389,7 @@ def get_available_slots(request):
     def get_slots_for_date(date):
         availability = professional.availability_schedule.filter(
             weekday=date.weekday(),
+            region=region,
             is_active=True
         )
         if not availability.exists():
@@ -395,8 +412,8 @@ def get_available_slots(request):
                     if not (slot_end <= break_start or current_time >= break_end):
                         current_time += timedelta(minutes=slot_duration)
                         continue
-                # Check unavailability (no region filter)
-                unavailabilities = professional.unavailable_dates.filter(date=date)
+                # Check unavailability (filter by region)
+                unavailabilities = professional.unavailable_dates.filter(date=date, region=region)
                 is_unavailable = False
                 for unavail in unavailabilities:
                     if unavail.start_time is None and unavail.end_time is None:
@@ -411,11 +428,12 @@ def get_available_slots(request):
                 if is_unavailable:
                     current_time += timedelta(minutes=slot_duration)
                     continue
-                # Check for existing bookings (no region filter)
+                # Check for existing bookings (filter by region)
                 from bookings.models import Booking
                 existing_bookings = Booking.objects.filter(
                     professional=professional,
                     scheduled_date=date,
+                    region=region,
                     status__in=['confirmed', 'in_progress']
                 )
                 is_booked = False
@@ -430,7 +448,7 @@ def get_available_slots(request):
                     'start_time': current_time.time(),
                     'end_time': slot_end.time(),
                     'is_available': not (is_unavailable or is_booked),
-                    'price': service.get_regional_price(getattr(booking, 'region', None)) if is_booked else service.get_regional_price(None)
+                    'price': service.get_regional_price(region)
                 })
                 current_time += timedelta(minutes=slot_duration)
         return slots
