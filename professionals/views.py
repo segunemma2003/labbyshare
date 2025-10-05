@@ -239,29 +239,112 @@ class AvailabilityUpdateView(generics.RetrieveUpdateDestroyAPIView):
 
 
 
+@swagger_auto_schema(
+    operation_description="Get unavailable dates/times for a professional. Requires professional_id and region_id. Optionally filter by date range.",
+    manual_parameters=[
+        openapi.Parameter(
+            'professional_id', openapi.IN_QUERY,
+            description="Professional ID",
+            type=openapi.TYPE_INTEGER,
+            required=True
+        ),
+        openapi.Parameter(
+            'region_id', openapi.IN_QUERY,
+            description="Region ID to filter unavailability",
+            type=openapi.TYPE_INTEGER,
+            required=True
+        ),
+        openapi.Parameter(
+            'date', openapi.IN_QUERY,
+            description="Specific date (YYYY-MM-DD)",
+            type=openapi.TYPE_STRING,
+            required=False
+        ),
+        openapi.Parameter(
+            'start_date', openapi.IN_QUERY,
+            description="Start date for range (YYYY-MM-DD)",
+            type=openapi.TYPE_STRING,
+            required=False
+        ),
+        openapi.Parameter(
+            'end_date', openapi.IN_QUERY,
+            description="End date for range (YYYY-MM-DD)",
+            type=openapi.TYPE_STRING,
+            required=False
+        ),
+    ],
+    responses={200: UnavailabilitySerializer(many=True)}
+)
 class UnavailabilityView(generics.ListCreateAPIView):
     """
-    Manage unavailable dates/times
+    Get unavailable dates/times for professionals
     """
     serializer_class = UnavailabilitySerializer
-    permission_classes = [IsVerifiedProfessional]
+    permission_classes = [permissions.AllowAny]
     
     def get_queryset(self):
         # Handle schema generation with AnonymousUser
         if getattr(self, 'swagger_fake_view', False):
             return ProfessionalUnavailability.objects.none()
-            
-        if not hasattr(self.request.user, 'professional_profile'):
-            return ProfessionalUnavailability.objects.none()
-            
-        professional = self.request.user.professional_profile
-        region = getattr(self.request, 'region', None)
         
-        return ProfessionalUnavailability.objects.filter(
-            professional=professional,
-            region=region,
-            date__gte=timezone.now().date()
-        ).order_by('date', 'start_time')
+        # Get query parameters
+        professional_id = self.request.query_params.get('professional_id')
+        region_id = self.request.query_params.get('region_id')
+        date_str = self.request.query_params.get('date')
+        start_date_str = self.request.query_params.get('start_date')
+        end_date_str = self.request.query_params.get('end_date')
+        
+        # Validate required parameters
+        if not professional_id or not region_id:
+            return ProfessionalUnavailability.objects.none()
+        
+        try:
+            professional = Professional.objects.get(id=professional_id)
+        except Professional.DoesNotExist:
+            return ProfessionalUnavailability.objects.none()
+        
+        # Build filter conditions
+        filters = {
+            'professional': professional,
+            'region_id': region_id,
+        }
+        
+        # Handle date filtering
+        if date_str:
+            # Single date filter
+            try:
+                date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                filters['date'] = date
+            except ValueError:
+                return ProfessionalUnavailability.objects.none()
+        elif start_date_str and end_date_str:
+            # Date range filter
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                filters['date__gte'] = start_date
+                filters['date__lte'] = end_date
+            except ValueError:
+                return ProfessionalUnavailability.objects.none()
+        elif start_date_str:
+            # Only start date provided
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                filters['date__gte'] = start_date
+            except ValueError:
+                return ProfessionalUnavailability.objects.none()
+        elif end_date_str:
+            # Only end date provided
+            try:
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                filters['date__lte'] = end_date
+            except ValueError:
+                return ProfessionalUnavailability.objects.none()
+        else:
+            # Default: show future dates only
+            filters['date__gte'] = timezone.now().date()
+        
+        return ProfessionalUnavailability.objects.filter(**filters).order_by('date', 'start_time')
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -269,9 +352,12 @@ class UnavailabilityView(generics.ListCreateAPIView):
         # Handle schema generation
         if getattr(self, 'swagger_fake_view', False):
             return context
-            
+        
+        # For authenticated users, set professional from their profile
         if hasattr(self.request.user, 'professional_profile'):
             context['professional'] = self.request.user.professional_profile
+        
+        # Set region from request
         context['region'] = getattr(self.request, 'region', None)
         return context
 
